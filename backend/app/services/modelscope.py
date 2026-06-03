@@ -15,8 +15,17 @@ import httpx
 from ..models.schemas import ModelSpec
 
 MS_BASE = "https://modelscope.cn/api/v1"
-TIMEOUT = httpx.Timeout(5.0)
-_HEADERS = {"User-Agent": "tokenforge/1.0"}
+TIMEOUT = httpx.Timeout(8.0)
+# 浏览器化请求头:ModelScope 的 WAF 常拦截非浏览器 UA / 缺 Referer 的请求 (403)
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://modelscope.cn/models",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
 
 # very small TTL cache: key -> (expires_at, value)
 _CACHE: dict[str, tuple[float, Any]] = {}
