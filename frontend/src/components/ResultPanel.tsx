@@ -148,8 +148,10 @@ function MetricCards({ r }: { r: EstimateResponse }) {
             (c.accent ? "border-forge-ember/60 bg-forge-ember/10" : "")
           }
         >
-          <Tip text={c.tip} className="absolute right-2 top-2" />
-          <div className="pr-4 text-[11px] text-slate-300">{c.label}</div>
+          <div className="flex items-center gap-1 text-[11px] text-slate-300">
+            {c.label}
+            <Tip text={c.tip} />
+          </div>
           <div
             className={
               "mt-1 text-xl font-bold " +

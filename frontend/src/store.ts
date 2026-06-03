@@ -17,7 +17,7 @@ export const DEFAULT_MODEL: ModelSpec = {
   vocab_size: 152064,
   precision: "BF16",
   tensor_types: "BF16",
-  weight_size_gb: 15.27,
+  weight_size_gb: 16.40,
 };
 
 // 默认值即 vLLM 官方推荐配置

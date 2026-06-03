@@ -24,7 +24,7 @@ from ..models.schemas import (
     ModelSpec,
 )
 
-GB = 1024**3
+GB = 10**9
 
 # --dtype -> 每元素字节数 (auto 视为 BF16)
 DTYPE_BYTES: dict[str, float] = {

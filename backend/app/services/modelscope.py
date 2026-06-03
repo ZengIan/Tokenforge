@@ -117,9 +117,9 @@ def _model_to_result(m: dict) -> dict[str, Any]:
     task = ""
     if tasks and isinstance(tasks, list) and isinstance(tasks[0], dict):
         task = tasks[0].get("Name") or tasks[0].get("name") or ""
-    # 官方仓库大小 (StorageSize, 字节) -> GiB, 与 estimator 常量 GB=1024**3 一致
+    # 官方仓库大小 (StorageSize, 字节) -> 十进制 GB, 与 estimator GB=10**9 一致
     storage = m.get("StorageSize") or m.get("storageSize")
-    weight_size_gb = round(storage / (1024**3), 2) if isinstance(storage, (int, float)) and storage > 0 else None
+    weight_size_gb = round(storage / 1e9, 2) if isinstance(storage, (int, float)) and storage > 0 else None
     return {
         "model_id": model_id,
         "name": name,
@@ -183,12 +183,21 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
     if cached is not None:
         return cached
 
-    spec = ModelSpec(model_id=model_id, params_b=params_from_name(model_id) or 7.0)
+    spec = ModelSpec(model_id=model_id, params_b=params_from_name(model_id) or 0.0)
     spec.precision = precision_from_name(model_id)
     config_found = False
 
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT, headers=_HEADERS) as client:
+            # 0. 模型元数据 (总参数量 + StorageSize → weight_size_gb)
+            meta = await _fetch_model_meta(client, model_id)
+            if meta:
+                if meta.get("params"):
+                    spec.params_b = meta["params"]
+                    spec.params_accurate = True
+                if meta.get("weight_gb"):
+                    spec.weight_size_gb = meta["weight_gb"]
+
             # 1. config.json (架构参数 + 精度)
             url = f"{MS_BASE}/models/{model_id}/repo?Revision=master&FilePath=config.json"
             resp = await client.get(url)
@@ -212,20 +221,8 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
                     # 张量类型: quantization_config + tensor metadata
                     spec.tensor_types = _extract_tensor_types(cfg, model_id)
 
-            # 2. 权重大小: 搜索结果已带 StorageSize，此处不做额外汇总
-            # (如果搜索结果未提供，前端显示时由用户手动填写)
-
-            # 3. 准确参数量: 优先从模型元数据接口获取
-            meta_params = await _fetch_model_params(client, model_id)
-            name_params = params_from_name(model_id)
-            if meta_params is not None:
-                spec.params_b = meta_params
-                spec.params_accurate = True
-            elif name_params is not None:
-                spec.params_b = name_params
-                spec.params_accurate = True
-            elif spec.weight_size_gb:
-                # 正则失败且无 API 数据时，用权重大小推算（标记为不准确）
+            # 2. 如果步骤0未拿到参数，用权重大小兜底推算
+            if spec.params_b == 0 and spec.weight_size_gb:
                 inferred = params_from_storage(spec.weight_size_gb * 1e9, model_id)
                 if inferred:
                     spec.params_b = inferred
@@ -278,8 +275,8 @@ def _extract_tensor_types(cfg: dict, model_id: str) -> str:
     return precision_from_name(model_id)
 
 
-async def _fetch_model_params(client: httpx.AsyncClient, model_id: str) -> Optional[float]:
-    """从 /api/v1/models/{id} 获取 ModelScope 官方的总参数量(TotalParameters)。"""
+async def _fetch_model_meta(client: httpx.AsyncClient, model_id: str) -> Optional[dict]:
+    """从 /api/v1/models/{id} 获取 ModelScope 官方的总参数量和 StorageSize。"""
     try:
         url = f"{MS_BASE}/models/{model_id}"
         resp = await client.get(url)
@@ -291,10 +288,14 @@ async def _fetch_model_params(client: httpx.AsyncClient, model_id: str) -> Optio
         d = data.get("Data") or data
         if not isinstance(d, dict):
             return None
-        # TotalParameters 字段 (有的 API 返回字符串或数字)
+        result: dict = {}
         tp = d.get("TotalParameters") or d.get("totalParameters")
         if tp is not None:
-            return float(tp)
+            result["params"] = float(tp)
+        storage = d.get("StorageSize") or d.get("storageSize")
+        if isinstance(storage, (int, float)) and storage > 0:
+            result["weight_gb"] = round(storage / 1e9, 2)
+        return result if result else None
     except Exception:
         pass
     return None
