@@ -4,19 +4,32 @@ import type { EstimateResponse } from "../types";
 export function ResultPanel() {
   const { result, loading, error } = useStore();
 
+  const heading = (
+    <h2 className="mb-1 text-sm font-bold text-forge-flame">④ 性能测算</h2>
+  );
+
   if (error) {
-    return <div className="card text-amber-400">估算失败：{error}</div>;
+    return (
+      <div className="space-y-1">
+        {heading}
+        <div className="card text-amber-400">估算失败：{error}</div>
+      </div>
+    );
   }
   if (!result) {
     return (
-      <div className="card flex h-40 items-center justify-center text-slate-500">
-        {loading ? "锻造中… 🔥" : "调整左侧参数即可自动估算"}
+      <div className="space-y-1">
+        {heading}
+        <div className="card flex h-40 items-center justify-center text-slate-500">
+          {loading ? "锻造中… 🔥" : "调整参数即可自动估算"}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
+      {heading}
       <MetricCards r={result} />
       <MemoryBreakdownChart r={result} />
       <Bottleneck r={result} />

@@ -29,6 +29,7 @@ from ..models.schemas import (
 GB = 1024**3
 
 # bytes per parameter for a given quantisation of the *weights*
+# WxAy 命名: x=权重位宽, y=激活位宽。显存只受权重位宽影响。
 QUANT_BYTES: dict[str, float] = {
     "FP16": 2.0,
     "BF16": 2.0,
@@ -37,6 +38,9 @@ QUANT_BYTES: dict[str, float] = {
     "INT4": 0.5,
     "GPTQ": 0.5,
     "AWQ": 0.5,
+    "W8A8": 1.0,   # 权重 8bit
+    "W4A8": 0.5,   # 权重 4bit, 激活 8bit
+    "W4A16": 0.5,  # 权重 4bit, 激活 16bit
 }
 
 # extra multiplier for group-quantised formats (scales / zero-points)
@@ -44,7 +48,12 @@ QUANT_OVERHEAD: dict[str, float] = {
     "GPTQ": 1.10,
     "AWQ": 1.08,
     "INT4": 1.05,
+    "W4A8": 1.05,
+    "W4A16": 1.05,
 }
+
+# 激活为 8bit/FP8 的量化方案,decode 计算可走低精度 Tensor Core
+LOW_PRECISION_COMPUTE = {"FP8", "W8A8", "W4A8"}
 
 KV_BYTES: dict[str, float] = {"FP16": 2.0, "BF16": 2.0, "FP8": 1.0, "INT8": 1.0}
 
@@ -97,7 +106,8 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     head_dim = model.hidden_size / max(1, model.num_attention_heads)
     kv_dim = _kv_heads(model) * head_dim  # GQA-aware KV width
 
-    seq = inf.input_len + inf.output_len
+    # KV cache is sized by the configured context window (not just in/out).
+    seq = inf.context_len
     # active sequences in flight = concurrency, each padded to batch grouping
     active_seqs = inf.concurrency
 
@@ -111,15 +121,17 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     if inf.framework in ("vLLM", "SGLang"):
         kv = kv / KV_UTIL  # account for paging overhead -> larger reservation
 
-    # --- activations (modest peak model) ---
-    act = active_seqs * seq * model.hidden_size * wb * ACT_ALPHA
+    # --- activations (modest peak model, prefill-dominated) ---
+    act = active_seqs * inf.input_len * model.hidden_size * wb * ACT_ALPHA
 
-    overhead = OVERHEAD_PER_GPU * n_gpu
+    # --enforce-eager 关闭 CUDA Graph,省去其捕获显存(~0.6GB/卡)
+    overhead_per_gpu = OVERHEAD_PER_GPU - (0.6 * GB if inf.enforce_eager else 0)
+    overhead = overhead_per_gpu * n_gpu
 
     total = weights + kv + act + overhead
     # TP shards weights+kv across all cards; activations + overhead are roughly
     # per-card resident, so per-gpu = sharded part / n + per-card part.
-    per_gpu = (weights + kv) / n_gpu + act / n_gpu + OVERHEAD_PER_GPU
+    per_gpu = (weights + kv) / n_gpu + act / n_gpu + overhead_per_gpu
 
     breakdown = MemoryBreakdown(
         weights_gb=weights / GB,
@@ -141,7 +153,7 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     params = model.params_b * 1e9
 
     # aggregate hardware roofline across the whole TP group
-    use_fp8 = inf.quant in ("FP8",)
+    use_fp8 = inf.quant in LOW_PRECISION_COMPUTE
     flops_total = 0.0
     bw_total = 0.0  # bytes/s
     total_mem_gb = 0.0
@@ -175,7 +187,12 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     # interconnect derate for TP all-reduce when no high-speed link
     if n_gpu > 1 and not all_nvlink:
         compute_util *= 0.85
-        warnings.append("存在无高速互联(NVLink/HCCS)的卡,TP 通信开销已下调效率 ~15%。")
+        warnings.append("无高速互联(NVLink/HCCS),TP 通信开销已下调效率 ~15%。")
+
+    # --enforce-eager 关闭 CUDA Graph,decode kernel 启动开销变大
+    if inf.enforce_eager:
+        compute_util *= 0.92
+        mem_util *= 0.95
 
     batch = inf.concurrency  # continuous batching: in-flight requests
 
@@ -219,13 +236,17 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         inf=inf,
     )
 
-    util = mem.total_gb / total_mem_gb if total_mem_gb > 0 else 0.0
-    fits = mem.per_gpu_gb <= (total_mem_gb / n_gpu)
+    # --gpu-memory-utilization 限定可用显存预算
+    per_gpu_capacity = (total_mem_gb / n_gpu) * inf.gpu_memory_utilization
+    budget = per_gpu_capacity * n_gpu
+    util = mem.total_gb / budget if budget > 0 else 0.0
+    fits = mem.per_gpu_gb <= per_gpu_capacity
 
     if not fits:
         suggestions.insert(
             0,
-            "⚠ 单卡显存超限!建议:降低量化精度 / 减小并发或上下文 / 增加卡数(提高 TP)。",
+            "⚠ 超出 gpu-memory-utilization 预算!建议:降低量化精度 / 减小并发或上下文 / "
+            "增加卡数 / 调高 --gpu-memory-utilization。",
         )
 
     return EstimateResponse(

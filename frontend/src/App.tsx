@@ -75,16 +75,15 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 p-4 lg:grid-cols-12">
-        <div className="space-y-4 lg:col-span-4">
+      {/* 2×2 四宫格：左上 模型 / 左下 GPU / 右上 性能测算 / 右下 推理参数 */}
+      <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 p-4 lg:grid-cols-2">
+        <div className="space-y-4">
           <ModelPanel />
-          <InferencePanel />
-        </div>
-        <div className="space-y-4 lg:col-span-3">
           <GpuPanel />
         </div>
-        <div className="lg:col-span-5">
+        <div className="space-y-4">
           <ResultPanel />
+          <InferencePanel />
         </div>
       </main>
 
