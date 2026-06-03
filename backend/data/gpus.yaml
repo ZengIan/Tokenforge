@@ -1,0 +1,118 @@
+# ============================================================================
+# tokenforge 卡库 (gpus.yaml)
+# ----------------------------------------------------------------------------
+# 字段说明:
+#   mem_gb        : 单卡显存 (GB)
+#   bw_gbs        : 显存带宽 (GB/s) —— decode 吞吐的核心瓶颈,务必填准
+#   fp16_tflops   : 稠密 FP16/BF16 算力 (TFLOPS) —— ★必须是 dense 值★
+#   fp8_tflops    : 稠密 FP8 算力 (TFLOPS) —— 同上,不要用带稀疏(sparse)的翻倍数
+#   nvlink        : 是否有片间高速互联 (true/false) —— 影响 TP all-reduce 效率
+#   source        : 数据来源,便于 review 可信度。取值约定:
+#                     datasheet      = 厂商官方规格书/白皮书 (最权威)
+#                     measured@日期  = 自己实测 (国产卡首选,最可信)
+#                     estimate       = 公开估值/推测 (★存疑,用前务必核实★)
+#
+# ⚠ 关于 TFLOPS 的大坑:
+#   NVIDIA 官方常标"带稀疏 (with sparsity)"的算力,是真实稠密算力的 2 倍。
+#   推理估算必须用稠密值。本文件 NVIDIA 卡已全部换算为 dense 值(官方数 ÷2)。
+#
+# ⚠ 关于国产卡:
+#   910C / PPU / DCU 的公开参数多为新闻稿或推测,精度不可信。
+#   下方占位值标记为 estimate,上线/投标前务必用厂商 datasheet 或实测覆盖,
+#   并把 source 改为 datasheet 或 measured@日期。
+# ============================================================================
+
+gpus:
+
+  # ---------- NVIDIA (公开 datasheet,已换算为稠密值) ----------
+
+  "H20-3e (141G)":
+    mem_gb: 141
+    bw_gbs: 4800            # HBM3e
+    fp16_tflops: 148        # dense
+    fp8_tflops: 296         # dense
+    nvlink: true            # NVLink 900GB/s
+    source: datasheet
+    note: "你当前主力卡 (log 中 NVIDIA_H20-3e)。算力弱、带宽强,decode 友好、prefill 偏慢。"
+
+  "H20 (96G)":
+    mem_gb: 96
+    bw_gbs: 4000            # HBM3
+    fp16_tflops: 148        # dense
+    fp8_tflops: 296         # dense
+    nvlink: true
+    source: datasheet
+
+  "H100 SXM (80G)":
+    mem_gb: 80
+    bw_gbs: 3350            # HBM3
+    fp16_tflops: 989        # dense (官方 1979 含稀疏,÷2)
+    fp8_tflops: 1979        # dense (官方 3958 含稀疏,÷2)
+    nvlink: true
+    source: datasheet
+    note: "算力是 H20 的 6.7 倍,带宽反而略低。对比用,别拿它近似 H20。"
+
+  "H200 SXM (141G)":
+    mem_gb: 141
+    bw_gbs: 4800            # HBM3e
+    fp16_tflops: 989        # dense
+    fp8_tflops: 1979        # dense
+    nvlink: true
+    source: datasheet
+
+  "A100 SXM (80G)":
+    mem_gb: 80
+    bw_gbs: 2039            # HBM2e
+    fp16_tflops: 312        # dense
+    fp8_tflops: 0           # Ampere 无原生 FP8
+    nvlink: true
+    source: datasheet
+    note: "无 FP8。跑 FP8 模型会回退到其他精度。"
+
+  # ---------- 国产卡 (★占位,务必用 datasheet 或实测覆盖★) ----------
+
+  "Ascend 910C (64G)":
+    mem_gb: 64
+    bw_gbs: 3200            # ⚠ estimate
+    fp16_tflops: 160        # ⚠ estimate (BF16)
+    fp8_tflops: 320         # ⚠ estimate
+    nvlink: false           # 片间走 HCCS,非 NVLink,TP 通信特性不同
+    source: estimate
+    note: "★占位值,不可信★。请填华为昇腾官方规格书或 npu-smi/实测。910C 多为双 die 封装,实际有效带宽/算力按交付规格为准。"
+
+  "PPU (96G)":
+    mem_gb: 96
+    bw_gbs: 3400            # ⚠ estimate
+    fp16_tflops: 180        # ⚠ estimate
+    fp8_tflops: 360         # ⚠ estimate
+    nvlink: false
+    source: estimate
+    note: "★占位值,不可信★。请填厂商 datasheet 或实测覆盖。国联民生项目上线前必须核实。"
+
+  "Hygon DCU (示例)":
+    mem_gb: 64
+    bw_gbs: 1024            # ⚠ estimate
+    fp16_tflops: 0          # ⚠ estimate, 按具体型号填
+    fp8_tflops: 0
+    nvlink: false
+    source: estimate
+    note: "★占位★。型号众多,用 hy-smi/rocm-smi 读显存,算力带宽查对应型号 datasheet。"
+
+  # ---------- 自定义占位 ----------
+
+  "自定义 Custom":
+    mem_gb: 96
+    bw_gbs: 4000
+    fp16_tflops: 150
+    fp8_tflops: 300
+    nvlink: true
+    source: estimate
+    note: "前端临时编辑用。"
+
+# ============================================================================
+# 校准提示:
+#   纸面 TFLOPS 是理论上限,真实推理利用率远低于此。
+#   建议拿一张卡跑 MLPerf Inference 或 `vllm bench serve` 实测,
+#   用实测吞吐反推 tokenforge 里的"带宽利用率/算力利用率"系数,
+#   再套用到同架构其他卡。国产卡尤其只信实测,不信纸面。
+# ============================================================================

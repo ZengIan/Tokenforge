@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-slate-700/60 bg-slate-800/40 p-4 shadow-lg;
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium text-slate-400;
+  }
+  .input {
+    @apply w-full rounded-lg border border-slate-600 bg-slate-900/70 px-3 py-1.5
+      text-sm text-slate-100 outline-none focus:border-forge-ember;
+  }
+  .btn {
+    @apply rounded-lg bg-gradient-to-r from-forge-ember to-forge-flame px-4 py-2
+      text-sm font-semibold text-white transition hover:brightness-110
+      disabled:opacity-50;
+  }
+  .chip {
+    @apply rounded-md border border-slate-600 bg-slate-700/50 px-2 py-0.5 text-xs;
+  }
+}

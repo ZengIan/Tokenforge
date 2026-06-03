@@ -1,0 +1,17 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      # restrict in production, e.g. https://tokenforge.example.com
+      TOKENFORGE_CORS_ORIGINS: "*"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    restart: unless-stopped
