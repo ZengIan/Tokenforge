@@ -13,7 +13,7 @@ kill $(lsof -ti:5173) 2>/dev/null || true
 sleep 0.5
 
 # 启动后端
-echo "[3/3] 启动服务..."
+echo "启动后端服务..."
 cd $PROJ/backend
 python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
