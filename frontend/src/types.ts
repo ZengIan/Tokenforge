@@ -26,28 +26,25 @@ export interface GpuGroup {
   count: number;
 }
 
-export type Quant =
-  | "FP16"
-  | "BF16"
-  | "FP8"
-  | "INT8"
-  | "INT4"
-  | "GPTQ"
-  | "AWQ"
-  | "W8A8"
-  | "W4A8"
-  | "W4A16";
-export type Framework = "vLLM" | "TensorRT-LLM" | "SGLang" | "llama.cpp";
+export type DType = "auto" | "float16" | "bfloat16" | "float32";
+export type Quantization =
+  | "none"
+  | "fp8"
+  | "awq"
+  | "gptq"
+  | "int8"
+  | "w8a8"
+  | "w4a8"
+  | "w4a16";
+export type KVCacheDType = "auto" | "fp8" | "fp8_e5m2" | "fp8_e4m3" | "int8";
 
 export interface InferenceConfig {
-  input_len: number;
-  output_len: number;
-  context_len: number;
-  concurrency: number;
-  batch_size: number;
-  quant: Quant;
-  kv_quant: "FP16" | "BF16" | "FP8" | "INT8";
-  framework: Framework;
+  max_model_len: number;
+  max_num_seqs: number;
+  max_num_batched_tokens: number;
+  dtype: DType;
+  quantization: Quantization;
+  kv_cache_dtype: KVCacheDType;
   gpu_memory_utilization: number;
   enforce_eager: boolean;
   mem_util?: number | null;
@@ -72,6 +69,7 @@ export interface EstimateResponse {
   ttft_ms: number;
   tpot_ms: number;
   request_latency_ms: number;
+  max_fit_seqs: number;
   bottleneck: "Compute Bound" | "Memory Bound" | "Bandwidth Bound";
   suggestions: string[];
   effective_compute_util: number;

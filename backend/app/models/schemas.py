@@ -5,11 +5,14 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-Quant = Literal[
-    "FP16", "BF16", "FP8", "INT8", "INT4", "GPTQ", "AWQ", "W8A8", "W4A8", "W4A16"
+# --dtype: 计算精度
+DType = Literal["auto", "float16", "bfloat16", "float32"]
+# --quantization: 权重量化方法 (vLLM 取值风格)
+Quantization = Literal[
+    "none", "fp8", "awq", "gptq", "int8", "w8a8", "w4a8", "w4a16"
 ]
-KVQuant = Literal["FP16", "BF16", "FP8", "INT8"]
-Framework = Literal["vLLM", "TensorRT-LLM", "SGLang", "llama.cpp"]
+# --kv-cache-dtype: KV 缓存精度
+KVCacheDType = Literal["auto", "fp8", "fp8_e5m2", "fp8_e4m3", "int8"]
 
 
 class GpuSpec(BaseModel):
@@ -35,8 +38,8 @@ class ModelSpec(BaseModel):
     num_attention_heads: int = 32
     num_key_value_heads: Optional[int] = None  # GQA; defaults to num_attention_heads
     vocab_size: int = 32000
-    # weight storage precision of the checkpoint, used as a fallback for quant
-    precision: Quant = "FP16"
+    # checkpoint 原始精度的展示提示 (FP16/BF16/FP8/INT4...),从模型名推断
+    precision: str = "FP16"
     # 真实权重文件大小 (GB),来自 ModelScope 仓库文件汇总;为空则前端按公式估算
     weight_size_gb: Optional[float] = None
 
@@ -49,17 +52,23 @@ class GpuGroup(BaseModel):
 
 
 class InferenceConfig(BaseModel):
-    input_len: int = Field(1024, ge=1)
-    output_len: int = Field(256, ge=1)
-    # freely-configurable context window used to size the KV cache (8k–256k)
-    context_len: int = Field(8192, ge=8192, le=262144)
-    concurrency: int = Field(1, ge=1, le=4096)
-    batch_size: int = Field(1, ge=1, le=1024)
-    quant: Quant = "FP16"
-    kv_quant: KVQuant = "FP16"
-    framework: Framework = "vLLM"
-    # vLLM-style serving knobs
+    """对应 vLLM 启动参数。默认值即官方推荐配置。"""
+
+    # --max-model-len: 单请求最大上下文长度,决定 KV Cache 每路预留
+    max_model_len: int = Field(8192, ge=512, le=1048576)
+    # --max-num-seqs: 引擎最大并发序列数
+    max_num_seqs: int = Field(256, ge=1, le=8192)
+    # --max-num-batched-tokens: 单次迭代最多处理 token 数 (prefill 分块)
+    max_num_batched_tokens: int = Field(8192, ge=256, le=1048576)
+    # --dtype: 计算精度
+    dtype: DType = "auto"
+    # --quantization: 权重量化方法
+    quantization: Quantization = "none"
+    # --kv-cache-dtype: KV 缓存精度
+    kv_cache_dtype: KVCacheDType = "auto"
+    # --gpu-memory-utilization: 单卡显存使用上限占比
     gpu_memory_utilization: float = Field(0.90, ge=0.1, le=1.0)
+    # --enforce-eager: 关闭 CUDA Graph
     enforce_eager: bool = False
     # optional manual override of bandwidth/compute utilisation [0,1]
     mem_util: Optional[float] = None
@@ -92,6 +101,8 @@ class EstimateResponse(BaseModel):
     ttft_ms: float
     tpot_ms: float
     request_latency_ms: float
+    # 显存预算实际可容纳的并发序列数 (vLLM 会自动收敛到此值附近)
+    max_fit_seqs: int
     # analysis
     bottleneck: Literal["Compute Bound", "Memory Bound", "Bandwidth Bound"]
     suggestions: list[str]

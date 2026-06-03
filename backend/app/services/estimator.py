@@ -16,8 +16,6 @@ Coordinate system / assumptions
 """
 from __future__ import annotations
 
-import math
-
 from ..models.schemas import (
     EstimateRequest,
     EstimateResponse,
@@ -28,65 +26,74 @@ from ..models.schemas import (
 
 GB = 1024**3
 
-# bytes per parameter for a given quantisation of the *weights*
-# WxAy 命名: x=权重位宽, y=激活位宽。显存只受权重位宽影响。
-QUANT_BYTES: dict[str, float] = {
-    "FP16": 2.0,
-    "BF16": 2.0,
-    "FP8": 1.0,
-    "INT8": 1.0,
-    "INT4": 0.5,
-    "GPTQ": 0.5,
-    "AWQ": 0.5,
-    "W8A8": 1.0,   # 权重 8bit
-    "W4A8": 0.5,   # 权重 4bit, 激活 8bit
-    "W4A16": 0.5,  # 权重 4bit, 激活 16bit
+# --dtype -> 每元素字节数 (auto 视为 BF16)
+DTYPE_BYTES: dict[str, float] = {
+    "auto": 2.0,
+    "float16": 2.0,
+    "bfloat16": 2.0,
+    "float32": 4.0,
 }
 
-# extra multiplier for group-quantised formats (scales / zero-points)
+# --quantization -> 每参数权重字节数。"none" 表示不量化,按 --dtype 计。
+QUANT_BYTES: dict[str, float] = {
+    "fp8": 1.0,
+    "int8": 1.0,
+    "w8a8": 1.0,
+    "awq": 0.5,     # 4bit 组量化
+    "gptq": 0.5,    # 4bit 组量化
+    "w4a8": 0.5,
+    "w4a16": 0.5,
+}
+
+# 组量化的 scale/zero-point 额外开销
 QUANT_OVERHEAD: dict[str, float] = {
-    "GPTQ": 1.10,
-    "AWQ": 1.08,
-    "INT4": 1.05,
-    "W4A8": 1.05,
-    "W4A16": 1.05,
+    "awq": 1.08,
+    "gptq": 1.10,
+    "w4a8": 1.05,
+    "w4a16": 1.05,
 }
 
 # 激活为 8bit/FP8 的量化方案,decode 计算可走低精度 Tensor Core
-LOW_PRECISION_COMPUTE = {"FP8", "W8A8", "W4A8"}
+LOW_PRECISION_COMPUTE = {"fp8", "w8a8", "w4a8"}
 
-KV_BYTES: dict[str, float] = {"FP16": 2.0, "BF16": 2.0, "FP8": 1.0, "INT8": 1.0}
-
-# compute-utilisation (η) midpoints per framework — PRD §4.3
-FRAMEWORK_COMPUTE_UTIL: dict[str, float] = {
-    "TensorRT-LLM": 0.72,
-    "vLLM": 0.60,
-    "SGLang": 0.65,
-    "llama.cpp": 0.45,
+# --kv-cache-dtype -> 每元素字节数。auto 跟随 --dtype。
+KV_DTYPE_BYTES: dict[str, float] = {
+    "fp8": 1.0,
+    "fp8_e5m2": 1.0,
+    "fp8_e4m3": 1.0,
+    "int8": 1.0,
 }
 
-# achievable fraction of peak HBM bandwidth during decode, per framework
-FRAMEWORK_MEM_UTIL: dict[str, float] = {
-    "TensorRT-LLM": 0.85,
-    "vLLM": 0.80,
-    "SGLang": 0.80,
-    "llama.cpp": 0.60,
-}
+# vLLM 的算力/带宽利用率经验系数
+VLLM_COMPUTE_UTIL = 0.60
+VLLM_MEM_UTIL = 0.80
 
-# PagedAttention KV-cache packing efficiency (vLLM/SGLang waste a little)
+# PagedAttention KV-cache packing efficiency
 KV_UTIL = 0.90
 
-# activation memory empirical coefficient (PRD §4.1, α is per-token, per-layer
-# working set is NOT all materialised at once during inference, so we use a
-# modest peak-activation model rather than the literal L-product).
+# activation memory empirical coefficient (peak working set ~ batched tokens)
 ACT_ALPHA = 2.0
 
 # fixed framework + CUDA context overhead per GPU (bytes)
 OVERHEAD_PER_GPU = 1.2 * GB
 
 
-def _quant_bytes(quant: str) -> float:
-    return QUANT_BYTES.get(quant, 2.0)
+def _weight_bytes(inf: InferenceConfig) -> float:
+    """运行时每参数权重字节数:有量化按量化,否则按 dtype。"""
+    if inf.quantization != "none":
+        return QUANT_BYTES.get(inf.quantization, 2.0)
+    return DTYPE_BYTES.get(inf.dtype, 2.0)
+
+
+def _act_bytes(inf: InferenceConfig) -> float:
+    return DTYPE_BYTES.get(inf.dtype, 2.0)
+
+
+def _kv_bytes(inf: InferenceConfig) -> float:
+    """KV 缓存每元素字节数;auto 跟随 dtype。"""
+    if inf.kv_cache_dtype != "auto":
+        return KV_DTYPE_BYTES.get(inf.kv_cache_dtype, 2.0)
+    return DTYPE_BYTES.get(inf.dtype, 2.0)
 
 
 def _kv_heads(model: ModelSpec) -> int:
@@ -106,23 +113,21 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     head_dim = model.hidden_size / max(1, model.num_attention_heads)
     kv_dim = _kv_heads(model) * head_dim  # GQA-aware KV width
 
-    # KV cache is sized by the configured context window (not just in/out).
-    seq = inf.context_len
-    # active sequences in flight = concurrency, each padded to batch grouping
-    active_seqs = inf.concurrency
+    # KV cache 按 --max-model-len 每路预留, --max-num-seqs 路并发。
+    seq = inf.max_model_len
+    active_seqs = inf.max_num_seqs
 
-    # --- weights (PRD §4.1) ---
-    wb = _quant_bytes(inf.quant)
-    weights = params * wb * QUANT_OVERHEAD.get(inf.quant, 1.0)
+    # --- weights ---
+    wb = _weight_bytes(inf)
+    weights = params * wb * QUANT_OVERHEAD.get(inf.quantization, 1.0)
 
-    # --- KV cache (PRD §4.1, GQA-aware) ---
-    kv_b = KV_BYTES.get(inf.kv_quant, 2.0)
+    # --- KV cache (GQA-aware) ---
+    kv_b = _kv_bytes(inf)
     kv = 2 * model.num_layers * kv_dim * seq * active_seqs * kv_b
-    if inf.framework in ("vLLM", "SGLang"):
-        kv = kv / KV_UTIL  # account for paging overhead -> larger reservation
+    kv = kv / KV_UTIL  # PagedAttention 分页预留略大于裸算
 
-    # --- activations (modest peak model, prefill-dominated) ---
-    act = active_seqs * inf.input_len * model.hidden_size * wb * ACT_ALPHA
+    # --- activations: 峰值 ~ 单次迭代批处理 token 数 (--max-num-batched-tokens) ---
+    act = inf.max_num_batched_tokens * model.hidden_size * _act_bytes(inf) * ACT_ALPHA
 
     # --enforce-eager 关闭 CUDA Graph,省去其捕获显存(~0.6GB/卡)
     overhead_per_gpu = OVERHEAD_PER_GPU - (0.6 * GB if inf.enforce_eager else 0)
@@ -153,7 +158,7 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     params = model.params_b * 1e9
 
     # aggregate hardware roofline across the whole TP group
-    use_fp8 = inf.quant in LOW_PRECISION_COMPUTE
+    use_fp8 = inf.quantization in LOW_PRECISION_COMPUTE
     flops_total = 0.0
     bw_total = 0.0  # bytes/s
     total_mem_gb = 0.0
@@ -173,16 +178,8 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         flops_total = 1e12
         warnings.append("所选 GPU 算力为 0(占位/未知),TPS 仅供参考。")
 
-    compute_util = (
-        inf.compute_util
-        if inf.compute_util is not None
-        else FRAMEWORK_COMPUTE_UTIL.get(inf.framework, 0.6)
-    )
-    mem_util = (
-        inf.mem_util
-        if inf.mem_util is not None
-        else FRAMEWORK_MEM_UTIL.get(inf.framework, 0.8)
-    )
+    compute_util = inf.compute_util if inf.compute_util is not None else VLLM_COMPUTE_UTIL
+    mem_util = inf.mem_util if inf.mem_util is not None else VLLM_MEM_UTIL
 
     # interconnect derate for TP all-reduce when no high-speed link
     if n_gpu > 1 and not all_nvlink:
@@ -194,35 +191,40 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         compute_util *= 0.92
         mem_util *= 0.95
 
-    batch = inf.concurrency  # continuous batching: in-flight requests
+    batch = inf.max_num_seqs  # continuous batching: in-flight sequences
 
-    # ---------------- PREFILL (compute bound) — PRD §4.2 ----------------
-    # 2*P FLOPs per token, all input tokens of all in-flight requests.
-    prefill_flops = 2 * params * inf.input_len * batch
-    t_prefill = prefill_flops / (flops_total * compute_util)  # seconds
-    ttft = t_prefill / max(1, batch)  # per-request first-token latency
+    # ---------------- PREFILL (compute bound) ----------------
+    # 一次迭代处理 max-num-batched-tokens 个 token, 约等于一个长 prompt 的首字延迟。
+    prefill_flops = 2 * params * inf.max_num_batched_tokens
+    ttft = prefill_flops / (flops_total * compute_util)  # seconds
 
-    # ---------------- DECODE (bandwidth bound) — PRD §4.2 ----------------
-    # bytes moved per decode step: full weights (sharded across TP, but
-    # aggregate BW also scales, so use totals) + KV read for active batch.
-    weights_bytes = mem.weights_gb * GB
-    kv_bytes = mem.kv_cache_gb * GB
-    bytes_per_step = weights_bytes + kv_bytes
+    # ---------------- DECODE (bandwidth bound) ----------------
+    # 每步搬运: 全部权重 + 当前批 KV; 一次权重读取服务整批,故批越大总吞吐越高。
+    bytes_per_step = (mem.weights_gb + mem.kv_cache_gb) * GB
     tpot = bytes_per_step / (bw_total * mem_util)  # seconds / token (whole batch)
 
-    # compute floor for decode (rarely binding, but caps tiny-model TPS)
+    # compute floor for decode (caps tiny-model TPS)
     decode_compute_t = (2 * params * batch) / (flops_total * compute_util)
     tpot_eff = max(tpot, decode_compute_t)
 
-    decode_tps = batch / tpot_eff if tpot_eff > 0 else 0.0
+    # 总吞吐 = 满批稳态生成吞吐
+    tps = batch / tpot_eff if tpot_eff > 0 else 0.0
+    request_latency = ttft + tpot_eff  # 首字 + 单 token
 
-    # ---------------- combine ----------------
-    t_decode = inf.output_len * tpot_eff
-    request_latency = ttft + t_decode  # seconds, per request
+    # --gpu-memory-utilization 限定可用显存预算
+    per_gpu_capacity = (total_mem_gb / n_gpu) * inf.gpu_memory_utilization
+    budget = per_gpu_capacity * n_gpu
+    util = mem.total_gb / budget if budget > 0 else 0.0
+    fits = mem.per_gpu_gb <= per_gpu_capacity
 
-    total_tokens = (inf.input_len + inf.output_len) * batch
-    total_time = t_prefill + t_decode
-    tps = total_tokens / total_time if total_time > 0 else 0.0
+    # 显存预算实际可容纳的并发序列数
+    non_kv_gb = mem.total_gb - mem.kv_cache_gb  # 权重+激活+开销
+    kv_per_seq_gb = mem.kv_cache_gb / batch if batch > 0 else 0.0
+    avail_kv_gb = budget - non_kv_gb
+    if kv_per_seq_gb > 0:
+        max_fit_seqs = max(0, int(avail_kv_gb / kv_per_seq_gb))
+    else:
+        max_fit_seqs = batch
 
     # ---------------- bottleneck analysis ----------------
     bottleneck, suggestions = _analyse(
@@ -231,22 +233,20 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         n_gpu=n_gpu,
         tpot=tpot,
         decode_compute_t=decode_compute_t,
-        t_prefill=t_prefill,
-        t_decode=t_decode,
         inf=inf,
     )
-
-    # --gpu-memory-utilization 限定可用显存预算
-    per_gpu_capacity = (total_mem_gb / n_gpu) * inf.gpu_memory_utilization
-    budget = per_gpu_capacity * n_gpu
-    util = mem.total_gb / budget if budget > 0 else 0.0
-    fits = mem.per_gpu_gb <= per_gpu_capacity
 
     if not fits:
         suggestions.insert(
             0,
-            "⚠ 超出 gpu-memory-utilization 预算!建议:降低量化精度 / 减小并发或上下文 / "
-            "增加卡数 / 调高 --gpu-memory-utilization。",
+            f"⚠ 超出显存预算!当前配置约可容纳 {max_fit_seqs} 路并发(< max-num-seqs={batch})。"
+            "建议:量化权重(awq/fp8) / 调小 max-model-len 或 max-num-seqs / "
+            "用 fp8 kv-cache / 增加卡数 / 调高 --gpu-memory-utilization。",
+        )
+    elif max_fit_seqs < batch:
+        suggestions.append(
+            f"max-num-seqs={batch} 超过显存可容纳的约 {max_fit_seqs} 路,"
+            "vLLM 实际并发会收敛到该值附近(排队)。"
         )
 
     return EstimateResponse(
@@ -258,6 +258,7 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         ttft_ms=ttft * 1000,
         tpot_ms=tpot_eff * 1000,
         request_latency_ms=request_latency * 1000,
+        max_fit_seqs=max_fit_seqs,
         bottleneck=bottleneck,
         suggestions=suggestions,
         effective_compute_util=compute_util,
@@ -273,8 +274,6 @@ def _analyse(
     n_gpu: int,
     tpot: float,
     decode_compute_t: float,
-    t_prefill: float,
-    t_decode: float,
     inf: InferenceConfig,
 ) -> tuple[str, list[str]]:
     suggestions: list[str] = []
@@ -283,17 +282,15 @@ def _analyse(
 
     # memory pressure wins if we're near capacity
     if util > 0.92:
-        suggestions.append("显存接近上限,建议降低量化精度(如 FP16→INT8)或减小并发/上下文。")
+        suggestions.append("显存接近上限,建议量化权重(awq/fp8)或用 fp8 kv-cache、减小并发/上下文。")
         return "Memory Bound", suggestions
 
     # decode is bandwidth bound if BW time dominates the compute floor
-    if tpot >= decode_compute_t and t_decode >= t_prefill * 0.5:
-        suggestions.append("Decode 阶段受显存带宽限制,选用更高带宽显卡(如 H20/H200)可直接提升 TPS。")
-        suggestions.append("提高并发可摊薄权重读取成本,显著提升总 TPS(直到触及算力上限)。")
+    if tpot >= decode_compute_t:
+        suggestions.append("Decode 受显存带宽限制,选用更高带宽显卡(如 H20/H200)可直接提升 TPS。")
+        suggestions.append("提高 max-num-seqs 可摊薄权重读取成本,显著提升总 TPS(直到触及算力上限)。")
         return "Bandwidth Bound", suggestions
 
-    # otherwise compute bound (long prefill / heavy batch)
+    # otherwise compute bound (heavy batch)
     suggestions.append("受算力限制,建议增加 GPU 数量或换用更高算力显卡(如 H100/H200)。")
-    if inf.input_len > 8 * inf.output_len:
-        suggestions.append("输入远长于输出,Prefill 占主导;可考虑 Prefill/Decode 分离部署。")
     return "Compute Bound", suggestions

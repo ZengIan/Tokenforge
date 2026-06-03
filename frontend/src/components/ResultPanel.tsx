@@ -49,7 +49,8 @@ export function ResultPanel() {
 
 function MetricCards({ r }: { r: EstimateResponse }) {
   const cards = [
-    { label: "TPS", value: fmt(r.tps), unit: "tokens/s", accent: true },
+    { label: "TPS 总吞吐", value: fmt(r.tps), unit: "tokens/s", accent: true },
+    { label: "可容纳并发", value: fmt(r.max_fit_seqs), unit: "seqs" },
     { label: "总显存占用", value: r.memory.total_gb.toFixed(1), unit: "GB" },
     { label: "单卡占用", value: r.memory.per_gpu_gb.toFixed(1), unit: "GB" },
     { label: "显存利用率", value: (r.mem_utilization * 100).toFixed(0), unit: "%" },

@@ -1,22 +1,26 @@
 import { useStore } from "../store";
-import type { Framework, Quant } from "../types";
+import type { DType, KVCacheDType, Quantization } from "../types";
 
-const QUANTS: Quant[] = [
-  "FP16",
-  "BF16",
-  "FP8",
-  "INT8",
-  "INT4",
-  "GPTQ",
-  "AWQ",
-  "W8A8",
-  "W4A8",
-  "W4A16",
+const DTYPES: DType[] = ["auto", "float16", "bfloat16", "float32"];
+const QUANTIZATIONS: Quantization[] = [
+  "none",
+  "fp8",
+  "awq",
+  "gptq",
+  "int8",
+  "w8a8",
+  "w4a8",
+  "w4a16",
 ];
-const FRAMEWORKS: Framework[] = ["vLLM", "TensorRT-LLM", "SGLang", "llama.cpp"];
-const KV_QUANTS = ["FP16", "BF16", "FP8", "INT8"] as const;
+const KV_DTYPES: KVCacheDType[] = ["auto", "fp8", "fp8_e5m2", "fp8_e4m3", "int8"];
 
-const K = 1024;
+const LEN_PRESETS = [
+  { label: "4K", v: 4096 },
+  { label: "8K", v: 8192 },
+  { label: "32K", v: 32768 },
+  { label: "128K", v: 131072 },
+  { label: "256K", v: 262144 },
+];
 
 export function InferencePanel() {
   const { inference, setInference } = useStore();
@@ -24,111 +28,154 @@ export function InferencePanel() {
 
   return (
     <div className="card">
-      <h2 className="mb-3 text-sm font-bold text-forge-flame">③ 推理参数</h2>
+      <h2 className="mb-1 text-sm font-bold text-forge-flame">③ 推理参数</h2>
+      <p className="mb-3 text-[11px] text-slate-400">
+        对应 vLLM 启动参数，默认即推荐配置；悬停 <Q /> 查看说明与调整影响。
+      </p>
 
-      <Slider
-        label="输入长度 (prefill)"
-        hint="单请求 Prompt 长度，决定首字延迟 TTFT"
-        value={i.input_len}
-        min={1}
-        max={262144}
-        onChange={(v) => setInference({ input_len: v })}
+      <NumberField
+        label="上下文长度"
+        flag="--max-model-len"
+        tip="单请求最大上下文（输入+输出）长度，KV Cache 按它每路预留。推荐：按业务最长需求设置（如 8K/32K）。调大 → 每路 KV 线性增大、可并发数下降；调小 → 省显存、并发更高。"
+        value={i.max_model_len}
+        min={512}
+        max={1048576}
+        onChange={(v) => setInference({ max_model_len: v })}
+        presets={LEN_PRESETS}
+        onPreset={(v) => setInference({ max_model_len: v })}
       />
-      <Slider
-        label="输出长度 (decode)"
-        hint="单请求平均生成 token 数，决定总延迟"
-        value={i.output_len}
-        min={1}
-        max={262144}
-        onChange={(v) => setInference({ output_len: v })}
-      />
-      <Slider
-        label="上下文长度 (context)"
-        hint="KV Cache 按此长度预留，范围 8K–256K，可随意配置"
-        value={i.context_len}
-        min={8 * K}
-        max={256 * K}
-        step={8 * K}
-        onChange={(v) => setInference({ context_len: v })}
-      />
-      <Slider
+      <NumberField
         label="并发数"
-        hint="同时在飞的请求数，越高总 TPS 越高（直到触及算力/显存上限）"
-        value={i.concurrency}
+        flag="--max-num-seqs"
+        tip="引擎同时处理的最大序列数（并发上限）。推荐：256。调大 → 总吞吐 TPS 上升，但 KV 显存占用上升；超过显存可容纳量时 vLLM 会自动排队。"
+        value={i.max_num_seqs}
         min={1}
-        max={512}
-        onChange={(v) => setInference({ concurrency: v })}
+        max={8192}
+        onChange={(v) => setInference({ max_num_seqs: v })}
+      />
+      <NumberField
+        label="最大批处理 Token 数"
+        flag="--max-num-batched-tokens"
+        tip="单次迭代最多处理的 token 数（prefill 分块预算）。推荐：≥ max-model-len，常用 8192。调大 → prefill 更快、TTFT 更低，但峰值激活显存上升；调小 → 省显存但首字变慢。"
+        value={i.max_num_batched_tokens}
+        min={256}
+        max={1048576}
+        onChange={(v) => setInference({ max_num_batched_tokens: v })}
+      />
+      <NumberField
+        label="显存利用率"
+        flag="--gpu-memory-utilization"
+        tip="允许 vLLM 使用的单卡显存比例。推荐：0.9。调大 → 更多显存留给 KV、并发更高，但 >0.95 易 OOM；调小 → 更安全但并发下降。"
+        value={i.gpu_memory_utilization}
+        min={0.1}
+        max={1}
+        step={0.05}
+        onChange={(v) => setInference({ gpu_memory_utilization: v })}
       />
 
-      <div className="mt-2 grid grid-cols-2 gap-2">
+      <div className="mt-1 grid grid-cols-2 gap-2">
         <Select
-          label="量化方式"
-          hint="权重/激活位宽，如 W4A8 = 权重4bit 激活8bit"
-          value={i.quant}
-          options={QUANTS}
-          onChange={(v) => setInference({ quant: v as Quant })}
+          label="计算精度"
+          flag="--dtype"
+          tip="权重/激活的计算精度。推荐：auto（通常 BF16）。float32 → 精度最高但显存翻倍、最慢；float16 / bfloat16 → 标准选择，二者显存相同。"
+          value={i.dtype}
+          options={DTYPES}
+          onChange={(v) => setInference({ dtype: v as DType })}
+        />
+        <Select
+          label="模型量化"
+          flag="--quantization"
+          tip="权重量化方法。推荐：none（原始精度）或 fp8（H 卡）。awq/gptq（4bit）→ 权重显存降至约 1/4，适合显存紧张；fp8 → 减半且 H 卡有加速。越激进精度损失越大。"
+          value={i.quantization}
+          options={QUANTIZATIONS}
+          onChange={(v) => setInference({ quantization: v as Quantization })}
         />
         <Select
           label="KV Cache 精度"
-          hint="KV 缓存存储精度，降低可省显存"
-          value={i.kv_quant}
-          options={[...KV_QUANTS]}
-          onChange={(v) => setInference({ kv_quant: v as (typeof KV_QUANTS)[number] })}
+          flag="--kv-cache-dtype"
+          tip="KV 缓存存储精度。推荐：auto（跟随 dtype）。选 fp8 → KV 显存减半、可并发翻倍，精度损失通常很小；int8 类似。"
+          value={i.kv_cache_dtype}
+          options={KV_DTYPES}
+          onChange={(v) => setInference({ kv_cache_dtype: v as KVCacheDType })}
         />
-        <Select
-          label="推理框架"
-          hint="影响算力/带宽利用率系数"
-          value={i.framework}
-          options={FRAMEWORKS}
-          onChange={(v) => setInference({ framework: v as Framework })}
-        />
-        <NumberField
-          label="gpu-memory-utilization"
-          hint="vLLM 可用显存上限占比，默认 0.9；越高可容纳越多 KV"
-          value={i.gpu_memory_utilization}
-          min={0.1}
-          max={1}
-          step={0.05}
-          onChange={(v) =>
-            setInference({ gpu_memory_utilization: clamp(v, 0.1, 1) })
-          }
-        />
+        <div className="flex items-end">
+          <Toggle
+            label="禁用 CUDA Graph"
+            flag="--enforce-eager"
+            tip="关闭 CUDA Graph。推荐：关闭此项（即保持 CUDA Graph 开启）。开启 → 省约 1–3GB 显存、启动快，但 decode 吞吐下降约 5–15%；仅在显存极紧张或调试时开启。"
+            checked={i.enforce_eager}
+            onChange={(v) => setInference({ enforce_eager: v })}
+          />
+        </div>
       </div>
-
-      <Toggle
-        label="enforce-eager"
-        hint="关闭 CUDA Graph：省一点显存，但 decode 略慢（默认关闭）"
-        checked={i.enforce_eager}
-        onChange={(v) => setInference({ enforce_eager: v })}
-      />
     </div>
   );
 }
 
-function Slider({
+/** 悬停说明的问号徽标 */
+function Tip({ text }: { text: string }) {
+  return (
+    <span className="group relative ml-1 inline-flex align-middle">
+      <span className="flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full border border-slate-500 text-[9px] leading-none text-slate-400 group-hover:border-forge-ember group-hover:text-forge-ember">
+        ?
+      </span>
+      <span className="pointer-events-none absolute left-5 top-0 z-30 hidden w-64 rounded-md border border-slate-600 bg-slate-900 p-2 text-[11px] font-normal leading-snug text-slate-200 shadow-xl group-hover:block">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+function Q() {
+  return (
+    <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-slate-500 text-[9px] text-slate-400">
+      ?
+    </span>
+  );
+}
+
+function LabelRow({ label, flag, tip }: { label: string; flag: string; tip: string }) {
+  return (
+    <span className="label mb-0 flex items-center">
+      {label}
+      <code className="ml-1.5 rounded bg-slate-900/70 px-1 text-[10px] text-slate-400">
+        {flag}
+      </code>
+      <Tip text={tip} />
+    </span>
+  );
+}
+
+function NumberField({
   label,
-  hint,
+  flag,
+  tip,
   value,
   min,
   max,
   step,
   onChange,
+  presets,
+  onPreset,
 }: {
   label: string;
-  hint?: string;
+  flag: string;
+  tip: string;
   value: number;
   min: number;
   max: number;
   step?: number;
   onChange: (v: number) => void;
+  presets?: { label: string; v: number }[];
+  onPreset?: (v: number) => void;
 }) {
   return (
     <div className="mb-2">
       <div className="flex items-center justify-between">
-        <span className="label mb-0">{label}</span>
+        <LabelRow label={label} flag={flag} tip={tip} />
         <input
           type="number"
-          className="input w-24 py-0.5 text-right"
+          className="input w-28 py-0.5 text-right"
           value={value}
           min={min}
           max={max}
@@ -136,105 +183,77 @@ function Slider({
           onChange={(e) => onChange(clamp(Number(e.target.value), min, max))}
         />
       </div>
-      <input
-        type="range"
-        className="w-full accent-forge-ember"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-      />
-      {hint && <p className="-mt-1 text-[10px] text-slate-500">{hint}</p>}
+      {presets && (
+        <div className="mt-1 flex gap-1">
+          {presets.map((p) => (
+            <button
+              key={p.label}
+              className={
+                "chip text-[10px] " +
+                (value === p.v ? "border-forge-ember text-forge-ember" : "")
+              }
+              onClick={() => onPreset?.(p.v)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 function Select({
   label,
-  hint,
+  flag,
+  tip,
   value,
   options,
   onChange,
 }: {
   label: string;
-  hint?: string;
+  flag: string;
+  tip: string;
   value: string;
   options: string[];
   onChange: (v: string) => void;
 }) {
   return (
     <label className="block">
-      <span className="label">{label}</span>
-      <select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
+      <LabelRow label={label} flag={flag} tip={tip} />
+      <select className="input mt-1" value={value} onChange={(e) => onChange(e.target.value)}>
         {options.map((o) => (
           <option key={o} value={o}>
             {o}
           </option>
         ))}
       </select>
-      {hint && <p className="mt-0.5 text-[10px] text-slate-500">{hint}</p>}
-    </label>
-  );
-}
-
-function NumberField({
-  label,
-  hint,
-  value,
-  min,
-  max,
-  step,
-  onChange,
-}: {
-  label: string;
-  hint?: string;
-  value: number;
-  min: number;
-  max: number;
-  step?: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="label">{label}</span>
-      <input
-        type="number"
-        className="input"
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(e) => onChange(Number(e.target.value))}
-      />
-      {hint && <p className="mt-0.5 text-[10px] text-slate-500">{hint}</p>}
     </label>
   );
 }
 
 function Toggle({
   label,
-  hint,
+  flag,
+  tip,
   checked,
   onChange,
 }: {
   label: string;
-  hint?: string;
+  flag: string;
+  tip: string;
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
   return (
-    <label className="mt-2 flex cursor-pointer items-start gap-2">
+    <label className="flex cursor-pointer items-center gap-2">
       <input
         type="checkbox"
-        className="mt-0.5 accent-forge-ember"
+        className="accent-forge-ember"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
       />
-      <span>
-        <span className="text-sm text-slate-200">{label}</span>
-        {hint && <p className="text-[10px] text-slate-500">{hint}</p>}
-      </span>
+      <LabelRow label={label} flag={flag} tip={tip} />
     </label>
   );
 }

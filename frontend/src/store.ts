@@ -18,15 +18,14 @@ export const DEFAULT_MODEL: ModelSpec = {
   precision: "BF16",
 };
 
+// 默认值即 vLLM 官方推荐配置
 export const DEFAULT_INFERENCE: InferenceConfig = {
-  input_len: 1024,
-  output_len: 256,
-  context_len: 8192,
-  concurrency: 8,
-  batch_size: 1,
-  quant: "FP16",
-  kv_quant: "FP16",
-  framework: "vLLM",
+  max_model_len: 8192,
+  max_num_seqs: 256,
+  max_num_batched_tokens: 8192,
+  dtype: "auto",
+  quantization: "none",
+  kv_cache_dtype: "auto",
   gpu_memory_utilization: 0.9,
   enforce_eager: false,
 };
