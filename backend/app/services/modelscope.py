@@ -124,8 +124,8 @@ _SEARCH_ENDPOINTS = (
 )
 
 
-async def search_models(query: str, limit: int = 10) -> list[dict[str, Any]]:
-    cache_key = f"search:{query}:{limit}"
+async def search_models(query: str, limit: int = 10, page: int = 1) -> list[dict[str, Any]]:
+    cache_key = f"search:{query}:{limit}:{page}"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
@@ -133,7 +133,7 @@ async def search_models(query: str, limit: int = 10) -> list[dict[str, Any]]:
     body = {
         "Name": query,
         "PageSize": limit,
-        "PageNumber": 1,
+        "PageNumber": page,
         "SortBy": "Default",
         "Criterion": [],
         "SingleCriterion": [],

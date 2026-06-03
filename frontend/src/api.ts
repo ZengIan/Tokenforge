@@ -18,9 +18,15 @@ export async function fetchGpus(): Promise<GpuSpec[]> {
   return json(await fetch(`${BASE}/api/gpus`));
 }
 
-export async function searchModels(q: string): Promise<SearchResult[]> {
+export async function searchModels(
+  q: string,
+  page = 1,
+  limit = 6
+): Promise<SearchResult[]> {
   const res = await json<{ results: SearchResult[] }>(
-    await fetch(`${BASE}/api/models/search?q=${encodeURIComponent(q)}`)
+    await fetch(
+      `${BASE}/api/models/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}`
+    )
   );
   return res.results;
 }

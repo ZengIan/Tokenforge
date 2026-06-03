@@ -4,54 +4,101 @@ import { useStore } from "../store";
 import type { SearchResult } from "../types";
 
 export function ModelPanel() {
+  const LIMIT = 6;
   const { model, setModel } = useStore();
   const [q, setQ] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const timer = useRef<number>();
   const reqId = useRef(0);
+  const pageRef = useRef(1);
+  const skipNext = useRef(false); // 选中模型后跳过一次自动检索
 
-  async function doSearch(query: string) {
+  const isErr = (res: SearchResult[]) => res.length === 1 && !!res[0].error;
+
+  // 第一页检索（输入框防抖 / 按钮 / 回车）
+  async function freshSearch(query: string) {
     const text = query.trim();
     if (!text) {
       setResults([]);
+      setHasMore(false);
       return;
     }
     const id = ++reqId.current;
     setLoading(true);
     try {
-      const res = await searchModels(text);
-      if (id === reqId.current) {
-        // 只采用最后一次请求的结果，避免乱序覆盖
-        setResults(res);
-        setOpen(true);
-      }
+      const res = await searchModels(text, 1, LIMIT);
+      if (id !== reqId.current) return; // 只采用最后一次请求，避免乱序覆盖
+      setResults(res);
+      setOpen(true);
+      pageRef.current = 1;
+      setHasMore(!isErr(res) && res.length >= LIMIT);
     } catch {
-      if (id === reqId.current) setResults([]);
+      if (id === reqId.current) {
+        setResults([]);
+        setHasMore(false);
+      }
     } finally {
       if (id === reqId.current) setLoading(false);
     }
   }
 
+  // 下滑触底加载下一页，追加到列表
+  async function loadMore() {
+    if (loadingMore || !hasMore) return;
+    const text = q.trim();
+    if (!text) return;
+    const next = pageRef.current + 1;
+    setLoadingMore(true);
+    try {
+      const res = await searchModels(text, next, LIMIT);
+      if (!isErr(res) && res.length > 0) {
+        setResults((prev) => {
+          const seen = new Set(prev.map((p) => p.model_id));
+          return [...prev, ...res.filter((r) => !seen.has(r.model_id))];
+        });
+        pageRef.current = next;
+      }
+      setHasMore(!isErr(res) && res.length >= LIMIT);
+    } catch {
+      /* 加载更多失败：静默，下次滚动可重试 */
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  function onListScroll(e: React.UIEvent<HTMLUListElement>) {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 48) loadMore();
+  }
+
   // 输入时自动检索（防抖 500ms）；按钮/回车可立即触发
   useEffect(() => {
     window.clearTimeout(timer.current);
-    if (!q.trim()) {
-      setResults([]);
+    if (skipNext.current) {
+      skipNext.current = false; // 选中模型导致的 q 变化，不触发检索
       return;
     }
-    timer.current = window.setTimeout(() => doSearch(q), 500);
+    if (!q.trim()) {
+      setResults([]);
+      setHasMore(false);
+      return;
+    }
+    timer.current = window.setTimeout(() => freshSearch(q), 500);
     return () => window.clearTimeout(timer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
   function searchNow() {
     window.clearTimeout(timer.current);
-    doSearch(q);
+    freshSearch(q);
   }
 
   async function pick(r: SearchResult) {
+    skipNext.current = true; // 防止填入模型名后又自动检索一次
     setOpen(false);
     setQ(r.model_id);
     // 官方仓库大小 (StorageSize) 来自搜索结果,作为权重大小的权威来源
@@ -103,7 +150,7 @@ export function ModelPanel() {
         {open && results.length > 0 && (
           <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-slate-600 bg-slate-900 shadow-xl">
             <div className="px-3 pt-2 text-xs font-bold text-forge-flame">模型库</div>
-            <ul className="max-h-72 overflow-auto py-1">
+            <ul className="max-h-72 overflow-auto py-1" onScroll={onListScroll}>
               {results.map((r) => (
                 <li
                   key={r.model_id}
@@ -124,6 +171,16 @@ export function ModelPanel() {
                   )}
                 </li>
               ))}
+              {loadingMore && (
+                <li className="px-3 py-2 text-center text-xs text-slate-400">
+                  加载更多…
+                </li>
+              )}
+              {!hasMore && !isErr(results) && results.length > 0 && (
+                <li className="px-3 py-1.5 text-center text-[11px] text-slate-500">
+                  没有更多了
+                </li>
+              )}
             </ul>
             <a
               href={`https://modelscope.cn/models?name=${encodeURIComponent(q)}`}
