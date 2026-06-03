@@ -54,12 +54,20 @@ export function ModelPanel() {
   async function pick(r: SearchResult) {
     setOpen(false);
     setQ(r.model_id);
+    // 官方仓库大小 (StorageSize) 来自搜索结果,作为权重大小的权威来源
     try {
       const detail = await fetchModelDetail(r.model_id);
-      setModel(detail);
+      setModel({
+        ...detail,
+        weight_size_gb: r.weight_size_gb ?? detail.weight_size_gb,
+      });
     } catch {
       // graceful fallback: keep name + inferred params, let user edit manually
-      setModel({ model_id: r.model_id, params_b: r.params_b || model.params_b });
+      setModel({
+        model_id: r.model_id,
+        params_b: r.params_b || model.params_b,
+        weight_size_gb: r.weight_size_gb,
+      });
     }
   }
 

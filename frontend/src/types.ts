@@ -85,5 +85,6 @@ export interface SearchResult {
   precision: string;
   task: string;
   downloads: number;
+  weight_size_gb?: number | null;
   error?: string;
 }

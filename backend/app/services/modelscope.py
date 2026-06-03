@@ -102,6 +102,9 @@ def _model_to_result(m: dict) -> dict[str, Any]:
     task = ""
     if tasks and isinstance(tasks, list) and isinstance(tasks[0], dict):
         task = tasks[0].get("Name") or tasks[0].get("name") or ""
+    # 官方仓库大小 (StorageSize, 字节) -> 十进制 GB, 与官网显示一致
+    storage = m.get("StorageSize") or m.get("storageSize")
+    weight_size_gb = round(storage / 1e9, 2) if isinstance(storage, (int, float)) and storage > 0 else None
     return {
         "model_id": model_id,
         "name": name,
@@ -110,6 +113,7 @@ def _model_to_result(m: dict) -> dict[str, Any]:
         "precision": precision_from_name(model_id),
         "task": task,
         "downloads": m.get("Downloads") or m.get("downloads") or 0,
+        "weight_size_gb": weight_size_gb,
     }
 
 
