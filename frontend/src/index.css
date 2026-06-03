@@ -17,7 +17,7 @@ body {
     @apply rounded-xl border border-slate-700/60 bg-slate-800/40 p-4 shadow-lg;
   }
   .label {
-    @apply mb-1 block text-xs font-medium text-slate-400;
+    @apply mb-1 block text-xs font-medium text-slate-300;
   }
   .input {
     @apply w-full rounded-lg border border-slate-600 bg-slate-900/70 px-3 py-1.5

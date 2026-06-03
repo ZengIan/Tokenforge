@@ -63,7 +63,7 @@ export function GpuPanel() {
                 ✕
               </button>
             </div>
-            <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
+            <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] text-slate-300">
               <span className="chip">{g.spec.mem_gb}GB</span>
               <span className="chip">{g.spec.bw_gbs} GB/s</span>
               <span className="chip">FP16 {g.spec.fp16_tflops}T</span>
@@ -87,14 +87,14 @@ export function GpuPanel() {
               </span>
             </div>
             {g.spec.note && (
-              <p className="mt-1 text-[11px] leading-snug text-slate-500">{g.spec.note}</p>
+              <p className="mt-1 text-[11px] leading-snug text-slate-300">{g.spec.note}</p>
             )}
           </div>
         ))}
       </div>
 
       <button
-        className="mt-2 w-full rounded-lg border border-dashed border-slate-600 py-1.5 text-sm text-slate-400 hover:border-forge-ember hover:text-forge-ember"
+        className="mt-2 w-full rounded-lg border border-dashed border-slate-600 py-1.5 text-sm text-slate-300 hover:border-forge-ember hover:text-forge-ember"
         onClick={() => gpuDb[0] && addGpuGroup(gpuDb[0])}
       >
         + 添加 GPU（支持异构混装）

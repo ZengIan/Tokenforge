@@ -79,7 +79,7 @@ export function ModelPanel() {
                       <div className="text-sm font-medium text-slate-100">
                         {r.chinese_name || r.model_id}
                       </div>
-                      <div className="mt-0.5 text-xs text-slate-500">{r.model_id}</div>
+                      <div className="mt-0.5 text-xs text-slate-300">{r.model_id}</div>
                     </>
                   )}
                 </li>
@@ -89,7 +89,7 @@ export function ModelPanel() {
               href={`https://modelscope.cn/models?name=${encodeURIComponent(q)}`}
               target="_blank"
               rel="noreferrer"
-              className="block border-t border-slate-800 px-3 py-2 text-center text-xs text-slate-500 hover:text-forge-ember"
+              className="block border-t border-slate-800 px-3 py-2 text-center text-xs text-slate-300 hover:text-forge-ember"
             >
               → 在 ModelScope 查看更多“{q}”相关模型
             </a>
@@ -106,7 +106,7 @@ export function ModelPanel() {
         <Field label="KV 头数 (GQA)" value={model.num_key_value_heads ?? model.num_attention_heads} onChange={(v) => setModel({ num_key_value_heads: v })} />
         <Field label="词表大小" value={model.vocab_size} onChange={(v) => setModel({ vocab_size: v })} />
       </div>
-      <p className="mt-2 text-[11px] text-slate-500">
+      <p className="mt-2 text-[11px] text-slate-300">
         数据可手动修改。GQA 的 KV 头数 &lt; 注意力头数时显著降低 KV Cache。
       </p>
     </div>
