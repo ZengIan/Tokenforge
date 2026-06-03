@@ -10,26 +10,46 @@ export function ModelPanel() {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const timer = useRef<number>();
+  const reqId = useRef(0);
 
+  async function doSearch(query: string) {
+    const text = query.trim();
+    if (!text) {
+      setResults([]);
+      return;
+    }
+    const id = ++reqId.current;
+    setLoading(true);
+    try {
+      const res = await searchModels(text);
+      if (id === reqId.current) {
+        // 只采用最后一次请求的结果，避免乱序覆盖
+        setResults(res);
+        setOpen(true);
+      }
+    } catch {
+      if (id === reqId.current) setResults([]);
+    } finally {
+      if (id === reqId.current) setLoading(false);
+    }
+  }
+
+  // 输入时自动检索（防抖 500ms）；按钮/回车可立即触发
   useEffect(() => {
+    window.clearTimeout(timer.current);
     if (!q.trim()) {
       setResults([]);
       return;
     }
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(async () => {
-      setLoading(true);
-      try {
-        setResults(await searchModels(q));
-        setOpen(true);
-      } catch {
-        setResults([]);
-      } finally {
-        setLoading(false);
-      }
-    }, 300); // 300ms debounce — PRD §2.1.1
+    timer.current = window.setTimeout(() => doSearch(q), 500);
     return () => window.clearTimeout(timer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
+
+  function searchNow() {
+    window.clearTimeout(timer.current);
+    doSearch(q);
+  }
 
   async function pick(r: SearchResult) {
     setOpen(false);
@@ -50,16 +70,28 @@ export function ModelPanel() {
       </h2>
 
       <div className="relative">
-        <input
-          className="input"
-          placeholder="搜索 ModelScope 模型，如 Qwen2.5-7B…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onFocus={() => results.length && setOpen(true)}
-        />
-        {loading && (
-          <span className="absolute right-3 top-2 text-xs text-slate-300">…</span>
-        )}
+        <div className="flex gap-2">
+          <input
+            className="input flex-1"
+            placeholder="关键字检索，如 qwen3-coder（回车或点搜索）"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onFocus={() => results.length && setOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                searchNow();
+              }
+            }}
+          />
+          <button
+            className="btn shrink-0 px-3"
+            onClick={searchNow}
+            disabled={loading || !q.trim()}
+          >
+            {loading ? "搜索中…" : "🔍 搜索"}
+          </button>
+        </div>
         {open && results.length > 0 && (
           <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-slate-600 bg-slate-900 shadow-xl">
             <div className="px-3 pt-2 text-xs font-bold text-forge-flame">模型库</div>
