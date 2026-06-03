@@ -181,6 +181,15 @@ gpus:
     source: datasheet
     note: "工作站形态的 A800(GA100, 40GB HBM2)。"
 
+  "NVIDIA A800 80GB Active":
+    mem_gb: 80
+    bw_gbs: 2039           # HBM2e
+    fp16_tflops: 312
+    fp8_tflops: 0
+    nvlink: true           # NVLink Bridge
+    source: datasheet
+    note: "工作站形态的 A800(GA100, 80GB HBM2e)。NVLink 桥接, 算力同 A100。"
+
   "NVIDIA A30 (24G)":
     mem_gb: 24
     bw_gbs: 933            # HBM2
@@ -397,6 +406,15 @@ gpus:
     source: estimate
     note: "★占位★。请以华为规格书或实测覆盖。"
 
+  "华为 Ascend 910B4-1 (32G)":
+    mem_gb: 32
+    bw_gbs: 800            # ⚠ estimate
+    fp16_tflops: 280       # ⚠ estimate
+    fp8_tflops: 0
+    nvlink: false
+    source: estimate
+    note: "★占位★。910B4 衍生 SKU,参数按 910B4 取近似。请以规格书或实测覆盖。"
+
   "华为 Ascend 910A (32G)":
     mem_gb: 32
     bw_gbs: 1200           # ⚠ estimate
@@ -427,6 +445,15 @@ gpus:
     nvlink: false          # 片间走 xGMI/HyperTransport
     source: estimate
     note: "★占位★。请以海光规格书或 hy-smi/实测覆盖。"
+
+  "海光 DCU K100-LC-E-AI (64G)":
+    mem_gb: 64
+    bw_gbs: 1200           # ⚠ estimate
+    fp16_tflops: 128       # ⚠ estimate
+    fp8_tflops: 0
+    nvlink: false
+    source: estimate
+    note: "★占位★。K100-AI 衍生型号(液冷/E 版),参数按 K100-AI 取近似。请以规格书或实测覆盖。"
 
   "海光 DCU Z100 (32G)":
     mem_gb: 32
