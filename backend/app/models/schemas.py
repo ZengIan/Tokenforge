@@ -111,6 +111,8 @@ class EstimateResponse(BaseModel):
     # analysis
     bottleneck: Literal["Compute Bound", "Memory Bound", "Bandwidth Bound"]
     suggestions: list[str]
+    # 性能/瓶颈分析是否可靠 (取决于所选 GPU 算力/带宽规格是否真实)
+    analysis_reliable: bool = True
     # echo of effective coefficients used
     effective_compute_util: float
     effective_mem_util: float

@@ -31,6 +31,13 @@ export function ResultPanel() {
   return (
     <div className="space-y-4">
       {heading}
+      {!result.analysis_reliable && (
+        <div className="rounded-lg border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-[11px] leading-snug text-amber-300">
+          ⚠ 所选 GPU 为占位/估值规格（算力或带宽未填真实值），下方 <b>TPS、延迟、瓶颈分析不可靠</b>，
+          仅 <b>显存占用 / 可容纳并发</b> 可参考。请在 <code>gpus.yaml</code> 填入厂商规格书或实测值
+          （把 <code>source</code> 改为 <code>datasheet</code>/<code>measured</code>）后再看性能结论。
+        </div>
+      )}
       {/* 第一行：性能测算指标卡 */}
       <MetricCards r={result} />
       {/* 第二行：显存分解 */}
@@ -222,16 +229,20 @@ const BOTTLENECK_FORMULA =
   "结果会随参数实时变化，属方向性建议，非精确测量。";
 
 function Bottleneck({ r }: { r: EstimateResponse }) {
-  const color =
-    r.bottleneck === "Memory Bound"
-      ? "text-red-400 border-red-700/50"
-      : r.bottleneck === "Bandwidth Bound"
-      ? "text-sky-400 border-sky-700/50"
-      : "text-amber-400 border-amber-700/50";
+  const color = !r.analysis_reliable
+    ? "text-slate-400 border-slate-600/60"
+    : r.bottleneck === "Memory Bound"
+    ? "text-red-400 border-red-700/50"
+    : r.bottleneck === "Bandwidth Bound"
+    ? "text-sky-400 border-sky-700/50"
+    : "text-amber-400 border-amber-700/50";
   return (
     <div className={"card relative " + color}>
       <h3 className="flex items-center gap-1 text-xs font-bold">
         瓶颈分析 · {r.bottleneck}
+        {!r.analysis_reliable && (
+          <span className="text-slate-500">（参数存疑，仅供参考）</span>
+        )}
         <Tip text={BOTTLENECK_FORMULA} className="text-slate-300" />
       </h3>
       <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-xs text-slate-300">

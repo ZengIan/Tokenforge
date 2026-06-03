@@ -75,6 +75,7 @@ export interface EstimateResponse {
   max_fit_seqs: number;
   bottleneck: "Compute Bound" | "Memory Bound" | "Bandwidth Bound";
   suggestions: string[];
+  analysis_reliable: boolean;
   effective_compute_util: number;
   effective_mem_util: number;
   warnings: string[];

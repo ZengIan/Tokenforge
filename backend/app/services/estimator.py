@@ -255,6 +255,29 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
             "vLLM 实际并发会收敛到该值附近(排队)。"
         )
 
+    # 性能/瓶颈分析的可靠性: 依赖算力&带宽规格。占位估值(source=estimate)或
+    # 算力/带宽为 0 时, TPS/延迟/瓶颈判定不可信(显存与可容纳并发仍可参考)。
+    analysis_reliable = all(
+        (g.spec.source == "datasheet" or g.spec.source.startswith("measured"))
+        and g.spec.fp16_tflops > 0
+        and g.spec.bw_gbs > 0
+        for g in req.gpus
+    )
+    # 非 NVIDIA(无 NVLink 的国产卡等)即便规格准确, 效率系数仍按 vLLM/NVIDIA 标定, 绝对值有偏差
+    non_nvidia = any(not g.spec.nvlink for g in req.gpus)
+    if not analysis_reliable:
+        suggestions.insert(
+            0,
+            "⚠ 所选 GPU 的算力/带宽为占位估值(source=estimate)或未知,"
+            "TPS、延迟与瓶颈判定不可靠;显存占用与可容纳并发仍可参考。"
+            "请在 gpus.yaml 填入厂商规格书或实测值(source 改为 datasheet/measured)后再看性能结论。",
+        )
+    elif non_nvidia:
+        suggestions.append(
+            "注:效率系数按 NVIDIA+vLLM 标定,非 N 卡(如海光 DCU/昇腾)软件栈不同,"
+            "绝对 TPS/延迟有偏差,建议以实测校准;瓶颈方向判断仍可用。"
+        )
+
     return EstimateResponse(
         memory=mem,
         total_mem_gb=total_mem_gb,
@@ -268,6 +291,7 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         max_fit_seqs=max_fit_seqs,
         bottleneck=bottleneck,
         suggestions=suggestions,
+        analysis_reliable=analysis_reliable,
         effective_compute_util=compute_util,
         effective_mem_util=mem_util,
         warnings=warnings,
