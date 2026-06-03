@@ -36,7 +36,12 @@ export function InferencePanel() {
       <NumberField
         label="上下文长度"
         flag="--max-model-len"
-        tip="单请求最大上下文（输入+输出）长度，KV Cache 按它每路预留。推荐：按业务最长需求设置（如 8K/32K）。调大 → 每路 KV 线性增大、可并发数下降；调小 → 省显存、并发更高。"
+        tip={
+          "作用：一次对话最多能处理多少字（token）——你的问题（输入）加模型的回答（输出）合起来的上限。设 8K 就是输入+输出总共最多约 8000 个 token。\n\n" +
+          "推荐：普通问答 8K 够用；长文档、长代码可设 32K 以上。\n\n" +
+          "调大：每个请求要预留更多显存来记住前文（这块缓存叫 KV Cache），结果是能同时服务的人数变少。\n" +
+          "调小：省显存、能同时服务更多人，但超长的输入会被截断。"
+        }
         value={i.max_model_len}
         min={512}
         max={1048576}
@@ -47,7 +52,12 @@ export function InferencePanel() {
       <NumberField
         label="并发数"
         flag="--max-num-seqs"
-        tip="引擎同时处理的最大序列数（并发上限）。推荐：256。调大 → 总吞吐 TPS 上升，但 KV 显存占用上升；超过显存可容纳量时 vLLM 会自动排队。"
+        tip={
+          "作用：服务器最多同时处理多少个请求，也就是多少人能同时在用。\n\n" +
+          "推荐：256。\n\n" +
+          "调大：同一时间能服务更多人，整体产出更高（产出用 TPS 衡量，即每秒生成多少个字/token，越高越快越能扛）。但每个请求都要占显存，显存不够时多出来的请求会自动排队等待。\n" +
+          "调小：显存压力小，但用的人一多就容易排队。"
+        }
         value={i.max_num_seqs}
         min={1}
         max={8192}
@@ -56,7 +66,12 @@ export function InferencePanel() {
       <NumberField
         label="最大批处理 Token 数"
         flag="--max-num-batched-tokens"
-        tip="单次迭代最多处理的 token 数（prefill 分块预算）。推荐：≥ max-model-len，常用 8192。调大 → prefill 更快、TTFT 更低，但峰值激活显存上升；调小 → 省显存但首字变慢。"
+        tip={
+          "作用：服务器“读题”阶段一次最多并行读多少个字。模型在开口回答前，要先把你的问题整段读一遍理解，这个阶段业内叫 prefill（预填充）。\n\n" +
+          "推荐：设成不小于上下文长度，常用 8192。\n\n" +
+          "调大：读题更快，于是“第一个字蹦出来”的等待时间更短（这个等待时间叫 TTFT，首字延迟）。代价是读题瞬间占用的临时显存更高。\n" +
+          "调小：省显存，但第一个字会更慢出来。"
+        }
         value={i.max_num_batched_tokens}
         min={256}
         max={1048576}
@@ -65,7 +80,12 @@ export function InferencePanel() {
       <NumberField
         label="显存利用率"
         flag="--gpu-memory-utilization"
-        tip="允许 vLLM 使用的单卡显存比例。推荐：0.9。调大 → 更多显存留给 KV、并发更高，但 >0.95 易 OOM；调小 → 更安全但并发下降。"
+        tip={
+          "作用：允许程序占用单张显卡多大比例的显存。0.9 就是最多用 90%，留 10% 给系统和临时开销。\n\n" +
+          "推荐：0.9。\n\n" +
+          "调大：留给“前文缓存”（KV Cache）的空间更多，能同时服务更多人。但超过 0.95 很容易爆显存——也就是 OOM（显存不够导致程序崩溃）。\n" +
+          "调小：更安全不易崩，但能服务的人数变少。"
+        }
         value={i.gpu_memory_utilization}
         min={0.1}
         max={1}
@@ -77,7 +97,12 @@ export function InferencePanel() {
         <Select
           label="计算精度"
           flag="--dtype"
-          tip="权重/激活的计算精度。推荐：auto（通常 BF16）。float32 → 精度最高但显存翻倍、最慢；float16 / bfloat16 → 标准选择，二者显存相同。"
+          tip={
+            "作用：模型计算时用多“精细”的数字。越精细结果越准，但越占显存、越慢。\n\n" +
+            "推荐：auto（自动，通常是 bfloat16）。\n\n" +
+            "float16 / bfloat16：都是“半精度”，显存占用一样，是常规选择。\n" +
+            "float32：“全精度”，显存直接翻倍、速度最慢，一般不需要。"
+          }
           value={i.dtype}
           options={DTYPES}
           onChange={(v) => setInference({ dtype: v as DType })}
@@ -85,7 +110,13 @@ export function InferencePanel() {
         <Select
           label="模型量化"
           flag="--quantization"
-          tip="权重量化方法。推荐：none（原始精度）或 fp8（H 卡）。awq/gptq（4bit）→ 权重显存降至约 1/4，适合显存紧张；fp8 → 减半且 H 卡有加速。越激进精度损失越大。"
+          tip={
+            "作用：把模型“压缩”成更小的格式来省显存，类似把高清图压成更小的文件。\n\n" +
+            "推荐：none（不压缩，质量最好）；用 H 系列显卡可选 fp8。\n\n" +
+            "awq / gptq：压成 4bit，权重显存能降到约原来的 1/4，适合显存不够的情况。\n" +
+            "fp8：压一半，且在新显卡（H 系列）上还能跑得更快。\n" +
+            "压得越狠越省显存，但回答质量损失也越大。"
+          }
           value={i.quantization}
           options={QUANTIZATIONS}
           onChange={(v) => setInference({ quantization: v as Quantization })}
@@ -93,7 +124,11 @@ export function InferencePanel() {
         <Select
           label="KV Cache 精度"
           flag="--kv-cache-dtype"
-          tip="KV 缓存存储精度。推荐：auto（跟随 dtype）。选 fp8 → KV 显存减半、可并发翻倍，精度损失通常很小；int8 类似。"
+          tip={
+            "作用：模型用来记住前文的缓存（KV Cache）用多精细的数字存。这块缓存往往是显存大户。\n\n" +
+            "推荐：auto（跟随上面的计算精度）。\n\n" +
+            "选 fp8（或 int8）：这块缓存占的显存减半，差不多等于能同时服务的人数翻倍，而且对回答质量影响通常很小，性价比很高。"
+          }
           value={i.kv_cache_dtype}
           options={KV_DTYPES}
           onChange={(v) => setInference({ kv_cache_dtype: v as KVCacheDType })}
@@ -102,7 +137,11 @@ export function InferencePanel() {
           <Toggle
             label="禁用 CUDA Graph"
             flag="--enforce-eager"
-            tip="关闭 CUDA Graph。推荐：关闭此项（即保持 CUDA Graph 开启）。开启 → 省约 1–3GB 显存、启动快，但 decode 吞吐下降约 5–15%；仅在显存极紧张或调试时开启。"
+            tip={
+              "作用：CUDA Graph 是一种让显卡跑得更快的优化。这个开关是“把这个优化关掉”。\n\n" +
+              "推荐：不要勾（也就是保持优化开启）。\n\n" +
+              "勾选后：能省约 1–3GB 显存、启动更快；但逐字往外蹦回答的阶段（叫 decode，解码）会慢 5–15%。只在显存特别紧张、或排查问题时才勾。"
+            }
             checked={i.enforce_eager}
             onChange={(v) => setInference({ enforce_eager: v })}
           />
@@ -119,7 +158,7 @@ function Tip({ text }: { text: string }) {
       <span className="flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full border border-slate-500 text-[9px] leading-none text-slate-400 group-hover:border-forge-ember group-hover:text-forge-ember">
         ?
       </span>
-      <span className="pointer-events-none absolute left-5 top-0 z-30 hidden w-64 rounded-md border border-slate-600 bg-slate-900 p-2 text-[11px] font-normal leading-snug text-slate-200 shadow-xl group-hover:block">
+      <span className="pointer-events-none absolute right-0 top-5 z-30 hidden w-80 whitespace-pre-line rounded-md border border-slate-600 bg-slate-900 p-3 text-[11px] font-normal leading-relaxed text-slate-200 shadow-xl group-hover:block">
         {text}
       </span>
     </span>
