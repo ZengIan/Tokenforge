@@ -65,7 +65,7 @@ export default function App() {
             <h1 className="text-lg font-black tracking-tight">
               🔥 Tokenforge
             </h1>
-            <p className="text-[11px] text-slate-500">
+            <p className="text-[11px] text-white">
               异构 GPU 推理吞吐与显存估算器 · Forge tokens from silicon
             </p>
           </div>
@@ -88,7 +88,7 @@ export default function App() {
         </div>
       </main>
 
-      <footer className="mx-auto max-w-7xl px-4 py-6 text-center text-[11px] text-slate-600">
+      <footer className="mx-auto max-w-7xl px-4 py-6 text-center text-[11px] text-white">
         估算为理论近似，实际部署误差目标 &lt;15%。国产卡参数请以厂商规格书或实测为准。
       </footer>
     </div>
