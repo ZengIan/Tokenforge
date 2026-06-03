@@ -25,17 +25,30 @@ export interface GpuGroup {
   count: number;
 }
 
-export type Quant = "FP16" | "BF16" | "FP8" | "INT8" | "INT4" | "GPTQ" | "AWQ";
+export type Quant =
+  | "FP16"
+  | "BF16"
+  | "FP8"
+  | "INT8"
+  | "INT4"
+  | "GPTQ"
+  | "AWQ"
+  | "W8A8"
+  | "W4A8"
+  | "W4A16";
 export type Framework = "vLLM" | "TensorRT-LLM" | "SGLang" | "llama.cpp";
 
 export interface InferenceConfig {
   input_len: number;
   output_len: number;
+  context_len: number;
   concurrency: number;
   batch_size: number;
   quant: Quant;
   kv_quant: "FP16" | "BF16" | "FP8" | "INT8";
   framework: Framework;
+  gpu_memory_utilization: number;
+  enforce_eager: boolean;
   mem_util?: number | null;
   compute_util?: number | null;
 }

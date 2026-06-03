@@ -79,7 +79,7 @@ export function ModelPanel() {
                       <div className="text-sm font-medium text-slate-100">
                         {r.chinese_name || r.model_id}
                       </div>
-                      <div className="mt-0.5 text-xs text-slate-300">{r.model_id}</div>
+                      <div className="mt-0.5 text-xs text-slate-500">{r.model_id}</div>
                     </>
                   )}
                 </li>
@@ -89,7 +89,7 @@ export function ModelPanel() {
               href={`https://modelscope.cn/models?name=${encodeURIComponent(q)}`}
               target="_blank"
               rel="noreferrer"
-              className="block border-t border-slate-800 px-3 py-2 text-center text-xs text-slate-300 hover:text-forge-ember"
+              className="block border-t border-slate-800 px-3 py-2 text-center text-xs text-slate-500 hover:text-forge-ember"
             >
               → 在 ModelScope 查看更多“{q}”相关模型
             </a>
@@ -97,40 +97,46 @@ export function ModelPanel() {
         )}
       </div>
 
-      {/* model parameters — editable manual override (PRD §2.1.3) */}
+      {/* model parameters — auto-fetched, read-only */}
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <Field label="参数量 (B)" value={model.params_b} onChange={(v) => setModel({ params_b: v })} />
-        <Field label="层数" value={model.num_layers} onChange={(v) => setModel({ num_layers: v })} />
-        <Field label="hidden_size" value={model.hidden_size} onChange={(v) => setModel({ hidden_size: v })} />
-        <Field label="注意力头数" value={model.num_attention_heads} onChange={(v) => setModel({ num_attention_heads: v })} />
-        <Field label="KV 头数 (GQA)" value={model.num_key_value_heads ?? model.num_attention_heads} onChange={(v) => setModel({ num_key_value_heads: v })} />
-        <Field label="词表大小" value={model.vocab_size} onChange={(v) => setModel({ vocab_size: v })} />
+        <Field label="参数量 (B)" value={model.params_b} />
+        <Field label="权重大小 (GB)" value={weightGb(model.params_b, model.precision)} />
+        <Field label="层数" value={model.num_layers} />
+        <Field label="hidden_size" value={model.hidden_size} />
+        <Field label="注意力头数" value={model.num_attention_heads} />
+        <Field label="KV 头数 (GQA)" value={model.num_key_value_heads ?? model.num_attention_heads} />
+        <Field label="词表大小" value={model.vocab_size} />
+        <Field label="模型精度" value={model.precision} />
       </div>
-      <p className="mt-2 text-[11px] text-slate-300">
-        数据可手动修改。GQA 的 KV 头数 &lt; 注意力头数时显著降低 KV Cache。
+      <p className="mt-2 text-[11px] text-slate-500">
+        以上参数由 ModelScope 自动获取，不可修改。权重大小 = 参数量 × 精度字节数。
       </p>
     </div>
   );
 }
 
-function Field({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-}) {
+// 模型精度 -> 每参数字节数（用于权重大小展示）
+const PRECISION_BYTES: Record<string, number> = {
+  FP32: 4,
+  FP16: 2,
+  BF16: 2,
+  FP8: 1,
+  INT8: 1,
+  INT4: 0.5,
+  GPTQ: 0.5,
+  AWQ: 0.5,
+};
+
+function weightGb(paramsB: number, precision: string): number {
+  const bytes = PRECISION_BYTES[precision] ?? 2;
+  return Math.round(((paramsB * 1e9 * bytes) / 1024 ** 3) * 10) / 10;
+}
+
+function Field({ label, value }: { label: string; value: number | string }) {
   return (
-    <label className="block">
+    <div>
       <span className="label">{label}</span>
-      <input
-        type="number"
-        className="input"
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-      />
-    </label>
+      <div className="input cursor-default bg-slate-900/40 text-slate-300">{value}</div>
+    </div>
   );
 }
