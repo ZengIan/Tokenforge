@@ -20,7 +20,7 @@ export function ResultPanel() {
     return (
       <div className="space-y-1">
         {heading}
-        <div className="card flex h-40 items-center justify-center text-slate-500">
+        <div className="card flex h-40 items-center justify-center text-slate-300">
           {loading ? "锻造中… 🔥" : "调整参数即可自动估算"}
         </div>
       </div>
@@ -65,10 +65,10 @@ function MetricCards({ r }: { r: EstimateResponse }) {
             "card p-3 " + (c.accent ? "border-forge-ember/60 bg-forge-ember/10" : "")
           }
         >
-          <div className="text-[11px] text-slate-400">{c.label}</div>
+          <div className="text-[11px] text-slate-300">{c.label}</div>
           <div className={"mt-1 text-xl font-bold " + (c.accent ? "text-forge-ember" : "text-slate-100")}>
             {c.value}
-            <span className="ml-1 text-xs font-normal text-slate-500">{c.unit}</span>
+            <span className="ml-1 text-xs font-normal text-slate-300">{c.unit}</span>
           </div>
         </div>
       ))}
@@ -111,7 +111,7 @@ function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
         {SEGMENTS.map((s) => (
           <div key={s.key} className="flex items-center gap-1.5">
             <span className={"inline-block h-2.5 w-2.5 rounded-sm " + s.color} />
-            <span className="text-slate-400">{s.label}</span>
+            <span className="text-slate-300">{s.label}</span>
             <span className="text-slate-200">{r.memory[s.key].toFixed(1)}GB</span>
           </div>
         ))}
@@ -135,7 +135,7 @@ function Bottleneck({ r }: { r: EstimateResponse }) {
           <li key={i}>{s}</li>
         ))}
       </ul>
-      <p className="mt-2 text-[11px] text-slate-500">
+      <p className="mt-2 text-[11px] text-slate-300">
         计算系数：算力利用率 {(r.effective_compute_util * 100).toFixed(0)}% · 带宽利用率{" "}
         {(r.effective_mem_util * 100).toFixed(0)}%
       </p>

@@ -58,7 +58,7 @@ export function ModelPanel() {
           onFocus={() => results.length && setOpen(true)}
         />
         {loading && (
-          <span className="absolute right-3 top-2 text-xs text-slate-500">…</span>
+          <span className="absolute right-3 top-2 text-xs text-slate-300">…</span>
         )}
         {open && results.length > 0 && (
           <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-slate-600 bg-slate-900 shadow-xl">
@@ -79,7 +79,7 @@ export function ModelPanel() {
                       <div className="text-sm font-medium text-slate-100">
                         {r.chinese_name || r.model_id}
                       </div>
-                      <div className="mt-0.5 text-xs text-slate-500">{r.model_id}</div>
+                      <div className="mt-0.5 text-xs text-slate-300">{r.model_id}</div>
                     </>
                   )}
                 </li>
@@ -89,7 +89,7 @@ export function ModelPanel() {
               href={`https://modelscope.cn/models?name=${encodeURIComponent(q)}`}
               target="_blank"
               rel="noreferrer"
-              className="block border-t border-slate-800 px-3 py-2 text-center text-xs text-slate-500 hover:text-forge-ember"
+              className="block border-t border-slate-800 px-3 py-2 text-center text-xs text-slate-300 hover:text-forge-ember"
             >
               → 在 ModelScope 查看更多“{q}”相关模型
             </a>
@@ -108,7 +108,7 @@ export function ModelPanel() {
         <Field label="词表大小" value={model.vocab_size} />
         <Field label="模型精度" value={model.precision} />
       </div>
-      <p className="mt-2 text-[11px] text-slate-500">
+      <p className="mt-2 text-[11px] text-slate-300">
         以上参数由 ModelScope 自动获取，不可修改。权重大小 = 参数量 × 精度字节数。
       </p>
     </div>

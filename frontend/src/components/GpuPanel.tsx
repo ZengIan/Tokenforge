@@ -23,7 +23,7 @@ export function GpuPanel() {
   }
 
   if (!group) {
-    return <div className="card text-slate-500">加载 GPU 卡库中…</div>;
+    return <div className="card text-slate-300">加载 GPU 卡库中…</div>;
   }
 
   return (
@@ -52,7 +52,7 @@ export function GpuPanel() {
             ))}
           </select>
           <div className="flex items-center gap-1">
-            <span className="text-xs text-slate-400">×</span>
+            <span className="text-xs text-slate-300">×</span>
             <input
               type="number"
               min={1}
@@ -64,7 +64,7 @@ export function GpuPanel() {
             />
           </div>
         </div>
-        <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] text-slate-400">
+        <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] text-slate-300">
           <span className="chip">{group.spec.mem_gb}GB</span>
           <span className="chip">{group.spec.bw_gbs} GB/s</span>
           <span className="chip">FP16 {group.spec.fp16_tflops}T</span>
@@ -88,10 +88,10 @@ export function GpuPanel() {
           </span>
         </div>
         {group.spec.note && (
-          <p className="mt-1 text-[11px] leading-snug text-slate-500">{group.spec.note}</p>
+          <p className="mt-1 text-[11px] leading-snug text-slate-300">{group.spec.note}</p>
         )}
       </div>
-      <p className="mt-2 text-[11px] text-slate-500">
+      <p className="mt-2 text-[11px] text-slate-300">
         张量并行 (TP) 部署，单一卡型 × 数量。
       </p>
     </div>
