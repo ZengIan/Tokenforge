@@ -89,7 +89,6 @@ export function InferencePanel() {
         value={i.gpu_memory_utilization}
         min={0.1}
         max={1}
-        step={0.05}
         onChange={(v) => setInference({ gpu_memory_utilization: v })}
       />
 
@@ -192,7 +191,6 @@ function NumberField({
   value,
   min,
   max,
-  step,
   onChange,
   presets,
   onPreset,
@@ -203,7 +201,6 @@ function NumberField({
   value: number;
   min: number;
   max: number;
-  step?: number;
   onChange: (v: number) => void;
   presets?: { label: string; v: number }[];
   onPreset?: (v: number) => void;

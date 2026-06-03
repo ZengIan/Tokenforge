@@ -1,5 +1,6 @@
 import { useStore } from "../store";
 import type { EstimateResponse } from "../types";
+import { Tip } from "./Tip";
 
 export function ResultPanel() {
   const { result, loading, error } = useStore();
@@ -30,7 +31,9 @@ export function ResultPanel() {
   return (
     <div className="space-y-4">
       {heading}
+      {/* 第一行：性能测算指标卡 */}
       <MetricCards r={result} />
+      {/* 第二行：显存分解 */}
       <MemoryBreakdownChart r={result} />
       <Bottleneck r={result} />
       {result.warnings.length > 0 && (
@@ -47,27 +50,105 @@ export function ResultPanel() {
   );
 }
 
+interface Metric {
+  label: string;
+  value: string;
+  unit: string;
+  tip: string;
+  accent?: boolean;
+}
+
 function MetricCards({ r }: { r: EstimateResponse }) {
-  const cards = [
-    { label: "TPS 总吞吐", value: fmt(r.tps), unit: "tokens/s", accent: true },
-    { label: "可容纳并发", value: fmt(r.max_fit_seqs), unit: "seqs" },
-    { label: "总显存占用", value: r.memory.total_gb.toFixed(2), unit: "GB" },
-    { label: "单卡占用", value: r.memory.per_gpu_gb.toFixed(2), unit: "GB" },
-    { label: "显存利用率", value: (r.mem_utilization * 100).toFixed(0), unit: "%" },
-    { label: "TTFT 首字延迟", value: r.ttft_ms.toFixed(0), unit: "ms" },
-    { label: "TPOT 每字延迟", value: r.tpot_ms.toFixed(2), unit: "ms" },
+  const cards: Metric[] = [
+    {
+      label: "TPS 总吞吐",
+      value: fmt(r.tps),
+      unit: "tokens/s",
+      accent: true,
+      tip:
+        "总吞吐 = 并发数 ÷ 单 token 耗时(TPOT)\n" +
+        "即满批稳态下每秒生成的总 token 数。\n" +
+        "本例 = max-num-seqs ÷ TPOT。",
+    },
+    {
+      label: "单请求 TPS",
+      value: fmt(r.single_tps),
+      unit: "tokens/s",
+      tip:
+        "单请求速度 = 1 ÷ TPOT\n" +
+        "一个 decode 步(TPOT)里每条请求各产出 1 个 token，\n" +
+        "所以单条请求每秒约 1/TPOT 个 token。\n" +
+        "总吞吐 = 单请求 TPS × 并发数。",
+    },
+    {
+      label: "可容纳并发",
+      value: fmt(r.max_fit_seqs),
+      unit: "seqs",
+      tip:
+        "= (显存预算 − 权重 − 激活 − 框架开销) ÷ 每路 KV 显存\n" +
+        "显存预算 = 单卡显存 × gpu-memory-utilization × 卡数。\n" +
+        "表示预算内最多能同时容纳多少路并发。",
+    },
+    {
+      label: "总显存占用",
+      value: r.memory.total_gb.toFixed(2),
+      unit: "GB",
+      tip: "= 模型权重 + KV Cache + 激活值 + 框架开销\n（各部分构成见下方“显存分解”）。",
+    },
+    {
+      label: "单卡占用",
+      value: r.memory.per_gpu_gb.toFixed(2),
+      unit: "GB",
+      tip:
+        "= (权重 + KV) ÷ 卡数 + 激活 ÷ 卡数 + 每卡固定开销\n" +
+        "张量并行(TP)把权重和 KV 均摊到每张卡。",
+    },
+    {
+      label: "显存利用率",
+      value: (r.mem_utilization * 100).toFixed(0),
+      unit: "%",
+      tip:
+        "= 总显存占用 ÷ 显存预算\n" +
+        "显存预算 = 总显存 × gpu-memory-utilization。\n" +
+        "超过 100% 表示放不下。",
+    },
+    {
+      label: "TTFT 首字延迟",
+      value: r.ttft_ms.toFixed(0),
+      unit: "ms",
+      tip:
+        "= 2 × 参数量 × max-num-batched-tokens ÷ (总算力 × 算力利用率)\n" +
+        "即模型把整段问题读一遍(prefill)的时间，\n" +
+        "决定“第一个字”多久蹦出来。",
+    },
+    {
+      label: "TPOT 每字延迟",
+      value: r.tpot_ms.toFixed(2),
+      unit: "ms",
+      tip:
+        "= (权重字节 + KV 字节) ÷ (总带宽 × 带宽利用率)\n" +
+        "decode 每生成 1 个 token 要把权重和 KV 从显存读一遍，\n" +
+        "主要受显存带宽限制。",
+    },
   ];
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-8">
       {cards.map((c) => (
         <div
           key={c.label}
           className={
-            "card p-3 " + (c.accent ? "border-forge-ember/60 bg-forge-ember/10" : "")
+            "card relative p-3 " +
+            (c.accent ? "border-forge-ember/60 bg-forge-ember/10" : "")
           }
         >
-          <div className="text-[11px] text-slate-300">{c.label}</div>
-          <div className={"mt-1 text-xl font-bold " + (c.accent ? "text-forge-ember" : "text-slate-100")}>
+          <Tip text={c.tip} className="absolute right-2 top-2" />
+          <div className="pr-4 text-[11px] text-slate-300">{c.label}</div>
+          <div
+            className={
+              "mt-1 text-xl font-bold " +
+              (c.accent ? "text-forge-ember" : "text-slate-100")
+            }
+          >
             {c.value}
             <span className="ml-1 text-xs font-normal text-slate-300">{c.unit}</span>
           </div>
@@ -84,12 +165,23 @@ const SEGMENTS = [
   { key: "overhead_gb", label: "框架开销", color: "bg-slate-500" },
 ] as const;
 
+const MEM_FORMULA =
+  "显存由四部分构成：\n" +
+  "• 模型权重：有官方大小用官方；否则 参数量 × 精度字节数 × 量化开销\n" +
+  "• KV Cache = 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9(分页)\n" +
+  "   KV维度 = KV头数 × head_dim（GQA 下 KV头数<注意力头数）\n" +
+  "• 激活值 ≈ max-num-batched-tokens × hidden_size × 字节 × 2\n" +
+  "• 框架开销 ≈ 每卡 1.2GB（CUDA 上下文等），enforce-eager 省约 0.6GB/卡";
+
 function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
   const total = r.memory.total_gb || 1;
   return (
-    <div className="card">
+    <div className="card relative">
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-xs font-bold text-slate-300">显存分解</h3>
+        <h3 className="flex items-center gap-1 text-xs font-bold text-slate-300">
+          显存分解
+          <Tip text={MEM_FORMULA} />
+        </h3>
         <span className={"text-xs " + (r.fits ? "text-emerald-400" : "text-red-400")}>
           {r.fits ? "✓ 可容纳" : "✗ 单卡超限"} · 容量 {r.total_mem_gb.toFixed(0)}GB
         </span>
@@ -121,6 +213,14 @@ function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
   );
 }
 
+const BOTTLENECK_FORMULA =
+  "判定逻辑（单一卡型 / 同构张量并行）：\n" +
+  "• 显存利用率 > 92% → 显存瓶颈 (Memory)\n" +
+  "• decode 受带宽限制(TPOT ≥ 算力下限) → 带宽瓶颈 (Bandwidth)\n" +
+  "• 否则 → 算力瓶颈 (Compute)\n\n" +
+  "本工具仅支持单一卡型同构部署，分析对该场景可靠；\n" +
+  "结果会随参数实时变化，属方向性建议，非精确测量。";
+
 function Bottleneck({ r }: { r: EstimateResponse }) {
   const color =
     r.bottleneck === "Memory Bound"
@@ -129,8 +229,11 @@ function Bottleneck({ r }: { r: EstimateResponse }) {
       ? "text-sky-400 border-sky-700/50"
       : "text-amber-400 border-amber-700/50";
   return (
-    <div className={"card " + color}>
-      <h3 className="text-xs font-bold">瓶颈分析 · {r.bottleneck}</h3>
+    <div className={"card relative " + color}>
+      <h3 className="flex items-center gap-1 text-xs font-bold">
+        瓶颈分析 · {r.bottleneck}
+        <Tip text={BOTTLENECK_FORMULA} className="text-slate-300" />
+      </h3>
       <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-xs text-slate-300">
         {r.suggestions.map((s, i) => (
           <li key={i}>{s}</li>

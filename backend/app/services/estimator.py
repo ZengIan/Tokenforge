@@ -213,6 +213,8 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
 
     # 总吞吐 = 满批稳态生成吞吐
     tps = batch / tpot_eff if tpot_eff > 0 else 0.0
+    # 单请求生成速度: 一个 decode 步(tpot)每条序列产出 1 个 token => 1/tpot
+    single_tps = 1.0 / tpot_eff if tpot_eff > 0 else 0.0
     request_latency = ttft + tpot_eff  # 首字 + 单 token
 
     # --gpu-memory-utilization 限定可用显存预算
@@ -259,6 +261,7 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         mem_utilization=util,
         fits=fits,
         tps=tps,
+        single_tps=single_tps,
         ttft_ms=ttft * 1000,
         tpot_ms=tpot_eff * 1000,
         request_latency_ms=request_latency * 1000,

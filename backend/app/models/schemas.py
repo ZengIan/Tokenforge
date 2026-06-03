@@ -102,6 +102,7 @@ class EstimateResponse(BaseModel):
     fits: bool
     # throughput
     tps: float
+    single_tps: float  # 单请求生成速度 (tokens/s)
     ttft_ms: float
     tpot_ms: float
     request_latency_ms: float

@@ -68,6 +68,7 @@ export interface EstimateResponse {
   mem_utilization: number;
   fits: boolean;
   tps: number;
+  single_tps: number;
   ttft_ms: number;
   tpot_ms: number;
   request_latency_ms: number;
