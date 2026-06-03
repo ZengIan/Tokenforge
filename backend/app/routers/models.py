@@ -8,7 +8,7 @@ router = APIRouter(prefix="/api/models", tags=["models"])
 
 
 @router.get("/search")
-async def search(q: str = Query(..., min_length=1), limit: int = 10) -> dict[str, Any]:
+async def search(q: str = Query(..., min_length=1), limit: int = 6) -> dict[str, Any]:
     """Search ModelScope models (PRD §2.1.1)."""
     results = await modelscope.search_models(q, limit=limit)
     return {"query": q, "results": results}

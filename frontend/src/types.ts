@@ -68,6 +68,7 @@ export interface EstimateResponse {
 export interface SearchResult {
   model_id: string;
   name: string;
+  chinese_name?: string;
   params_b: number | null;
   precision: string;
   task: string;

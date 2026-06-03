@@ -86,6 +86,7 @@ async def search_models(query: str, limit: int = 10) -> list[dict[str, Any]]:
                     {
                         "model_id": model_id,
                         "name": m.get("Name", ""),
+                        "chinese_name": m.get("ChineseName", "") or m.get("Name", ""),
                         "params_b": params_from_name(model_id),
                         "precision": precision_from_name(model_id),
                         "task": m.get("Tasks", [{}])[0].get("Name", "")

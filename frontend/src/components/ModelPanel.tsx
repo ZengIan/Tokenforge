@@ -61,30 +61,39 @@ export function ModelPanel() {
           <span className="absolute right-3 top-2 text-xs text-slate-500">…</span>
         )}
         {open && results.length > 0 && (
-          <ul className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-lg border border-slate-600 bg-slate-900 shadow-xl">
-            {results.map((r) => (
-              <li
-                key={r.model_id}
-                className="cursor-pointer border-b border-slate-800 px-3 py-2 text-sm hover:bg-slate-800"
-                onClick={() => pick(r)}
-              >
-                {r.error ? (
-                  <span className="text-amber-400">
-                    检索失败，可手动输入参数：{r.model_id}
-                  </span>
-                ) : (
-                  <>
-                    <div className="font-medium text-slate-100">{r.model_id}</div>
-                    <div className="mt-0.5 flex gap-1.5 text-[11px] text-slate-400">
-                      {r.params_b && <span className="chip">{r.params_b}B</span>}
-                      {r.precision && <span className="chip">{r.precision}</span>}
-                      {r.task && <span className="chip">{r.task}</span>}
-                    </div>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
+          <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-slate-600 bg-slate-900 shadow-xl">
+            <div className="px-3 pt-2 text-xs font-bold text-forge-flame">模型库</div>
+            <ul className="max-h-72 overflow-auto py-1">
+              {results.map((r) => (
+                <li
+                  key={r.model_id}
+                  className="cursor-pointer px-3 py-2 hover:bg-slate-800"
+                  onClick={() => pick(r)}
+                >
+                  {r.error ? (
+                    <span className="text-sm text-amber-400">
+                      检索失败，可手动输入参数：{r.model_id}
+                    </span>
+                  ) : (
+                    <>
+                      <div className="text-sm font-medium text-slate-100">
+                        {r.chinese_name || r.model_id}
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">{r.model_id}</div>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <a
+              href={`https://modelscope.cn/models?name=${encodeURIComponent(q)}`}
+              target="_blank"
+              rel="noreferrer"
+              className="block border-t border-slate-800 px-3 py-2 text-center text-xs text-slate-500 hover:text-forge-ember"
+            >
+              → 在 ModelScope 查看更多“{q}”相关模型
+            </a>
+          </div>
         )}
       </div>
 
