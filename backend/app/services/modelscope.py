@@ -54,6 +54,21 @@ def params_from_name(model_id: str) -> Optional[float]:
     return None
 
 
+def params_from_storage(storage_bytes: Optional[float], model_id: str) -> Optional[float]:
+    """正则无法提取参数量时，从 StorageSize 推算（GB ≈ B for FP8, GB/2 for FP16/BF16）。"""
+    if not isinstance(storage_bytes, (int, float)) or storage_bytes <= 0:
+        return None
+    gb = storage_bytes / 1e9
+    low = model_id.lower()
+    if any(k in low for k in ("fp8", "int8", "w8a8", "quant", "gptq", "awq")):
+        bytes_per_param = 1
+    elif any(k in low for k in ("fp16", "bf16", "float16", "bfloat16")):
+        bytes_per_param = 2
+    else:
+        bytes_per_param = 2  # default assumption
+    return round(gb / bytes_per_param, 2)
+
+
 _PRECISION_HINTS = [
     ("int4", "INT4"),
     ("gptq", "GPTQ"),
@@ -102,14 +117,14 @@ def _model_to_result(m: dict) -> dict[str, Any]:
     task = ""
     if tasks and isinstance(tasks, list) and isinstance(tasks[0], dict):
         task = tasks[0].get("Name") or tasks[0].get("name") or ""
-    # 官方仓库大小 (StorageSize, 字节) -> 十进制 GB, 与官网显示一致
+    # 官方仓库大小 (StorageSize, 字节) -> GiB, 与 estimator 常量 GB=1024**3 一致
     storage = m.get("StorageSize") or m.get("storageSize")
-    weight_size_gb = round(storage / 1e9, 2) if isinstance(storage, (int, float)) and storage > 0 else None
+    weight_size_gb = round(storage / (1024**3), 2) if isinstance(storage, (int, float)) and storage > 0 else None
     return {
         "model_id": model_id,
         "name": name,
         "chinese_name": m.get("ChineseName") or m.get("chineseName") or name,
-        "params_b": params_from_name(model_id),
+        "params_b": params_from_name(model_id) or params_from_storage(storage, model_id),
         "precision": precision_from_name(model_id),
         "task": task,
         "downloads": m.get("Downloads") or m.get("downloads") or 0,
@@ -162,7 +177,7 @@ async def search_models(query: str, limit: int = 10, page: int = 1) -> list[dict
 
 
 async def get_model_config(model_id: str) -> dict[str, Any]:
-    """Fetch config.json from a model repo and map to ModelSpec fields."""
+    """Fetch config.json + model metadata from a model repo and map to ModelSpec fields."""
     cache_key = f"config:{model_id}"
     cached = _cache_get(cache_key)
     if cached is not None:
@@ -174,6 +189,7 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
 
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT, headers=_HEADERS) as client:
+            # 1. config.json (架构参数 + 精度)
             url = f"{MS_BASE}/models/{model_id}/repo?Revision=master&FilePath=config.json"
             resp = await client.get(url)
             if resp.status_code == 200:
@@ -189,8 +205,31 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
                         spec.num_key_value_heads = int(cfg["num_key_value_heads"])
                     spec.vocab_size = int(cfg.get("vocab_size", spec.vocab_size))
 
-            # 真实权重大小:汇总仓库内权重文件体积(官方口径,十进制 GB)
-            spec.weight_size_gb = await _fetch_weight_size_gb(client, model_id)
+                    # 默认模型精度: torch_dtype
+                    td = cfg.get("torch_dtype")
+                    if td:
+                        spec.precision = str(td).replace("bfloat", "BF").replace("float", "FP").upper()
+                    # 张量类型: quantization_config + tensor metadata
+                    spec.tensor_types = _extract_tensor_types(cfg, model_id)
+
+            # 2. 权重大小: 搜索结果已带 StorageSize，此处不做额外汇总
+            # (如果搜索结果未提供，前端显示时由用户手动填写)
+
+            # 3. 准确参数量: 优先从模型元数据接口获取
+            meta_params = await _fetch_model_params(client, model_id)
+            name_params = params_from_name(model_id)
+            if meta_params is not None:
+                spec.params_b = meta_params
+                spec.params_accurate = True
+            elif name_params is not None:
+                spec.params_b = name_params
+                spec.params_accurate = True
+            elif spec.weight_size_gb:
+                # 正则失败且无 API 数据时，用权重大小推算（标记为不准确）
+                inferred = params_from_storage(spec.weight_size_gb * 1e9, model_id)
+                if inferred:
+                    spec.params_b = inferred
+                    spec.params_accurate = False
     except Exception:
         config_found = False
 
@@ -198,6 +237,67 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
     out["config_found"] = config_found
     _cache_set(cache_key, out)
     return out
+
+
+def _extract_tensor_types(cfg: dict, model_id: str) -> str:
+    """从 config.json 提取完整的张量类型信息，格式类似 'INT8, E8M0, BF16, F32'。"""
+    parts: list[str] = []
+
+    # 1. quantization_config.quant_method
+    qt = cfg.get("quantization_config")
+    if isinstance(qt, dict):
+        qm = qt.get("quant_method", "").lower()
+        fmt = qt.get("fmt", "")
+        scale = qt.get("scale_fmt", "")
+        if qm == "fp8":
+            parts.append(f"FP8_{fmt.upper()}" if fmt else "FP8")
+        elif qm:
+            parts.append(qm.upper())
+        if scale:
+            parts.append(scale.upper())
+
+    # 2. expert_dtype (MoE)
+    ed = cfg.get("expert_dtype")
+    if ed:
+        parts.append(ed.upper())
+
+    # 3. torch_dtype
+    td = cfg.get("torch_dtype")
+    if td:
+        dt = str(td).replace("bfloat", "BF").replace("float", "FP").upper()
+        if dt not in parts:
+            parts.append(dt)
+
+    # 4. 额外: 某些模型用 F32 分量
+    if cfg.get("expert_dtype") == "fp4":
+        if "FP4" not in parts:
+            parts.append("FP4")
+
+    if parts:
+        return ", ".join(parts)
+    return precision_from_name(model_id)
+
+
+async def _fetch_model_params(client: httpx.AsyncClient, model_id: str) -> Optional[float]:
+    """从 /api/v1/models/{id} 获取 ModelScope 官方的总参数量(TotalParameters)。"""
+    try:
+        url = f"{MS_BASE}/models/{model_id}"
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if not isinstance(data, dict):
+            return None
+        d = data.get("Data") or data
+        if not isinstance(d, dict):
+            return None
+        # TotalParameters 字段 (有的 API 返回字符串或数字)
+        tp = d.get("TotalParameters") or d.get("totalParameters")
+        if tp is not None:
+            return float(tp)
+    except Exception:
+        pass
+    return None
 
 
 # 计入权重大小的文件后缀

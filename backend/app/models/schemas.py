@@ -38,10 +38,14 @@ class ModelSpec(BaseModel):
     num_attention_heads: int = 32
     num_key_value_heads: Optional[int] = None  # GQA; defaults to num_attention_heads
     vocab_size: int = 32000
-    # checkpoint 原始精度的展示提示 (FP16/BF16/FP8/INT4...),从模型名推断
+    # 默认模型精度 (从 config.json torch_dtype 读取)
     precision: str = "FP16"
+    # 张量类型 (从 config.json quantization_config 提取的完整精度信息)
+    tensor_types: str = ""
     # 真实权重文件大小 (GB),来自 ModelScope 仓库文件汇总;为空则前端按公式估算
     weight_size_gb: Optional[float] = None
+    # 参数量是否从 ModelScope API 准确获取
+    params_accurate: bool = False
 
 
 class GpuGroup(BaseModel):

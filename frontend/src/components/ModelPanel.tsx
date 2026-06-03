@@ -128,7 +128,7 @@ export function ModelPanel() {
         <div className="flex gap-2">
           <input
             className="input flex-1"
-            placeholder="关键字检索，如 qwen3-coder（回车或点搜索）"
+            placeholder="关键字检索，如 qwen3-8B（回车或点搜索）"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onFocus={() => results.length && setOpen(true)}
@@ -194,53 +194,74 @@ export function ModelPanel() {
         )}
       </div>
 
-      {/* model parameters — auto-fetched, read-only */}
+      {/* model parameters */}
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <Field label="参数量 (B)" value={model.params_b} />
-        <Field
+        <NumField label="参数量 (B)" value={model.params_b} onChange={(v) => setModel({ params_b: v })} decimals={2} />
+        <NumField
           label="权重大小 (GB)"
-          value={
-            model.weight_size_gb != null
-              ? `${model.weight_size_gb}（官方）`
-              : `${weightGb(model.params_b, model.precision)}（估算）`
-          }
+          value={model.weight_size_gb ?? 0}
+          onChange={(v) => setModel({ weight_size_gb: v })}
+          decimals={2}
         />
-        <Field label="层数" value={model.num_layers} />
-        <Field label="hidden_size" value={model.hidden_size} />
-        <Field label="注意力头数" value={model.num_attention_heads} />
-        <Field label="KV 头数 (GQA)" value={model.num_key_value_heads ?? model.num_attention_heads} />
-        <Field label="词表大小" value={model.vocab_size} />
-        <Field label="模型精度" value={model.precision} />
+        <NumField label="层数" value={model.num_layers} onChange={(v) => setModel({ num_layers: v })} />
+        <NumField label="隐藏层" value={model.hidden_size} onChange={(v) => setModel({ hidden_size: v })} />
+        <NumField label="注意力头数" value={model.num_attention_heads} onChange={(v) => setModel({ num_attention_heads: v })} />
+        <NumField
+          label="KV 头数 (GQA)"
+          value={model.num_key_value_heads ?? model.num_attention_heads}
+          onChange={(v) => setModel({ num_key_value_heads: v })}
+        />
+        <TextField label="默认模型精度" value={model.precision} onChange={(v) => setModel({ precision: v })} />
+        <TextField label="张量类型" value={model.tensor_types ?? ""} onChange={(v) => setModel({ tensor_types: v } as any)} />
       </div>
       <p className="mt-2 text-[11px] text-slate-300">
-        以上参数由 ModelScope 自动获取，不可修改。权重大小优先取官方仓库文件体积，缺失时按参数量 × 精度字节数估算。
+        以上参数由 ModelScope 自动获取
+        {(!model.tensor_types || model.tensor_types === "") && (
+          <>，张量类型无法获取，请到{" "}
+            <a
+              href={`https://modelscope.cn/models/${model.model_id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-forge-ember underline hover:text-forge-flame"
+            >
+              ModelScope
+            </a>
+            {" "}确认
+          </>
+        )}。
       </p>
     </div>
   );
 }
 
-// 模型精度 -> 每参数字节数（用于权重大小展示）
-const PRECISION_BYTES: Record<string, number> = {
-  FP32: 4,
-  FP16: 2,
-  BF16: 2,
-  FP8: 1,
-  INT8: 1,
-  INT4: 0.5,
-  GPTQ: 0.5,
-  AWQ: 0.5,
-};
-
-function weightGb(paramsB: number, precision: string): number {
-  const bytes = PRECISION_BYTES[precision] ?? 2;
-  return Math.round(((paramsB * 1e9 * bytes) / 1024 ** 3) * 10) / 10;
-}
-
-function Field({ label, value }: { label: string; value: number | string }) {
+function NumField({ label, value, onChange, decimals }: { label: string; value: number; onChange: (v: number) => void; decimals?: number }) {
   return (
     <div>
       <span className="label">{label}</span>
-      <div className="input cursor-default bg-slate-900/40 text-slate-300">{value}</div>
+      <input
+        type="text"
+        inputMode="decimal"
+        className="input cursor-text"
+        value={decimals != null ? value.toFixed(decimals) : value}
+        onChange={(e) => {
+          const n = Number(e.target.value);
+          if (!isNaN(n)) onChange(n);
+        }}
+      />
+    </div>
+  );
+}
+
+function TextField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <span className="label">{label}</span>
+      <input
+        type="text"
+        className="input cursor-text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }

@@ -5,7 +5,7 @@ export function ResultPanel() {
   const { result, loading, error } = useStore();
 
   const heading = (
-    <h2 className="mb-1 text-sm font-bold text-forge-flame">④ 性能测算</h2>
+    <h2 className="mb-1 text-sm font-bold text-forge-flame">性能测算结果</h2>
   );
 
   if (error) {
@@ -51,11 +51,11 @@ function MetricCards({ r }: { r: EstimateResponse }) {
   const cards = [
     { label: "TPS 总吞吐", value: fmt(r.tps), unit: "tokens/s", accent: true },
     { label: "可容纳并发", value: fmt(r.max_fit_seqs), unit: "seqs" },
-    { label: "总显存占用", value: r.memory.total_gb.toFixed(1), unit: "GB" },
-    { label: "单卡占用", value: r.memory.per_gpu_gb.toFixed(1), unit: "GB" },
+    { label: "总显存占用", value: r.memory.total_gb.toFixed(2), unit: "GB" },
+    { label: "单卡占用", value: r.memory.per_gpu_gb.toFixed(2), unit: "GB" },
     { label: "显存利用率", value: (r.mem_utilization * 100).toFixed(0), unit: "%" },
     { label: "TTFT 首字延迟", value: r.ttft_ms.toFixed(0), unit: "ms" },
-    { label: "TPOT 每字延迟", value: r.tpot_ms.toFixed(1), unit: "ms" },
+    { label: "TPOT 每字延迟", value: r.tpot_ms.toFixed(2), unit: "ms" },
   ];
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -103,7 +103,7 @@ function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
               key={s.key}
               className={s.color}
               style={{ width: `${pct}%` }}
-              title={`${s.label}: ${v.toFixed(1)}GB`}
+              title={`${s.label}: ${v.toFixed(2)}GB`}
             />
           ) : null;
         })}
@@ -113,7 +113,7 @@ function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
           <div key={s.key} className="flex items-center gap-1.5">
             <span className={"inline-block h-2.5 w-2.5 rounded-sm " + s.color} />
             <span className="text-slate-300">{s.label}</span>
-            <span className="text-slate-200">{r.memory[s.key].toFixed(1)}GB</span>
+            <span className="text-slate-200">{r.memory[s.key].toFixed(2)}GB</span>
           </div>
         ))}
       </div>
@@ -145,5 +145,5 @@ function Bottleneck({ r }: { r: EstimateResponse }) {
 }
 
 function fmt(n: number) {
-  return n >= 1000 ? Math.round(n).toLocaleString() : n.toFixed(1);
+  return n >= 1000 ? Math.round(n).toLocaleString() : n.toFixed(2);
 }

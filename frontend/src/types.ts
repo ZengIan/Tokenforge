@@ -18,7 +18,9 @@ export interface ModelSpec {
   num_key_value_heads: number | null;
   vocab_size: number;
   precision: string;
+  tensor_types?: string;
   weight_size_gb?: number | null;
+  params_accurate?: boolean;
 }
 
 export interface GpuGroup {

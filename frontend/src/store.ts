@@ -8,20 +8,22 @@ import type {
 } from "./types";
 
 export const DEFAULT_MODEL: ModelSpec = {
-  model_id: "Qwen2.5-7B-Instruct",
-  params_b: 7,
-  hidden_size: 3584,
-  num_layers: 28,
-  num_attention_heads: 28,
-  num_key_value_heads: 4,
+  model_id: "Qwen3-8B",
+  params_b: 8.19,
+  hidden_size: 4096,
+  num_layers: 36,
+  num_attention_heads: 32,
+  num_key_value_heads: 8,
   vocab_size: 152064,
   precision: "BF16",
+  tensor_types: "BF16",
+  weight_size_gb: 15.27,
 };
 
 // 默认值即 vLLM 官方推荐配置
 export const DEFAULT_INFERENCE: InferenceConfig = {
   max_model_len: 8192,
-  max_num_seqs: 256,
+  max_num_seqs: 16,
   max_num_batched_tokens: 8192,
   dtype: "auto",
   quantization: "none",

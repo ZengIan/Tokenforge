@@ -213,13 +213,14 @@ function NumberField({
       <div className="flex items-center justify-between">
         <LabelRow label={label} flag={flag} tip={tip} />
         <input
-          type="number"
-          className="input w-28 py-0.5 text-right"
+          type="text"
+          inputMode="numeric"
+          className="input w-32 cursor-text text-right"
           value={value}
-          min={min}
-          max={max}
-          step={step}
-          onChange={(e) => onChange(clamp(Number(e.target.value), min, max))}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (!isNaN(n)) onChange(clamp(n, min, max));
+          }}
         />
       </div>
       {presets && (

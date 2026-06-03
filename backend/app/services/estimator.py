@@ -109,7 +109,6 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     if n_gpu <= 0:
         n_gpu = 1
 
-    params = model.params_b * 1e9
     head_dim = model.hidden_size / max(1, model.num_attention_heads)
     kv_dim = _kv_heads(model) * head_dim  # GQA-aware KV width
 
@@ -118,8 +117,13 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     active_seqs = inf.max_num_seqs
 
     # --- weights ---
-    wb = _weight_bytes(inf)
-    weights = params * wb * QUANT_OVERHEAD.get(inf.quantization, 1.0)
+    # 优先用 ModelScope 实际权重大小, 否则用 params_b 公式估算
+    if model.weight_size_gb and model.weight_size_gb > 0:
+        weights = model.weight_size_gb * GB * QUANT_OVERHEAD.get(inf.quantization, 1.0)
+    else:
+        params = model.params_b * 1e9
+        wb = _weight_bytes(inf)
+        weights = params * wb * QUANT_OVERHEAD.get(inf.quantization, 1.0)
 
     # --- KV cache (GQA-aware) ---
     kv_b = _kv_bytes(inf)
