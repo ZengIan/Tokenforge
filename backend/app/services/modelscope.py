@@ -114,8 +114,8 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
     config_found = False
 
     try:
-        url = f"{MS_BASE}/models/{model_id}/repo?Revision=master&FilePath=config.json"
         async with httpx.AsyncClient(timeout=TIMEOUT, headers=_HEADERS) as client:
+            url = f"{MS_BASE}/models/{model_id}/repo?Revision=master&FilePath=config.json"
             resp = await client.get(url)
             if resp.status_code == 200:
                 cfg = resp.json()
@@ -129,6 +129,9 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
                     if cfg.get("num_key_value_heads") is not None:
                         spec.num_key_value_heads = int(cfg["num_key_value_heads"])
                     spec.vocab_size = int(cfg.get("vocab_size", spec.vocab_size))
+
+            # 真实权重大小:汇总仓库内权重文件体积(官方口径,十进制 GB)
+            spec.weight_size_gb = await _fetch_weight_size_gb(client, model_id)
     except Exception:
         config_found = False
 
@@ -136,3 +139,28 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
     out["config_found"] = config_found
     _cache_set(cache_key, out)
     return out
+
+
+# 计入权重大小的文件后缀
+_WEIGHT_EXTS = (".safetensors", ".bin", ".gguf", ".pt", ".pth")
+
+
+async def _fetch_weight_size_gb(client: httpx.AsyncClient, model_id: str) -> Optional[float]:
+    """从 ModelScope 仓库文件列表汇总权重文件体积,返回十进制 GB。"""
+    try:
+        url = f"{MS_BASE}/models/{model_id}/repo/files?Revision=master&Recursive=true"
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        files = (data.get("Data") or {}).get("Files") or []
+        total = 0
+        for f in files:
+            name = (f.get("Path") or f.get("Name") or "").lower()
+            if name.endswith(_WEIGHT_EXTS):
+                total += int(f.get("Size", 0) or 0)
+        if total <= 0:
+            return None
+        return round(total / 1e9, 2)  # 与 ModelScope 页面一致的十进制 GB
+    except Exception:
+        return None

@@ -18,6 +18,7 @@ export interface ModelSpec {
   num_key_value_heads: number | null;
   vocab_size: number;
   precision: string;
+  weight_size_gb?: number | null;
 }
 
 export interface GpuGroup {

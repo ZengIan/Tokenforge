@@ -100,7 +100,14 @@ export function ModelPanel() {
       {/* model parameters — auto-fetched, read-only */}
       <div className="mt-3 grid grid-cols-2 gap-2">
         <Field label="参数量 (B)" value={model.params_b} />
-        <Field label="权重大小 (GB)" value={weightGb(model.params_b, model.precision)} />
+        <Field
+          label="权重大小 (GB)"
+          value={
+            model.weight_size_gb != null
+              ? `${model.weight_size_gb}（官方）`
+              : `${weightGb(model.params_b, model.precision)}（估算）`
+          }
+        />
         <Field label="层数" value={model.num_layers} />
         <Field label="hidden_size" value={model.hidden_size} />
         <Field label="注意力头数" value={model.num_attention_heads} />
@@ -109,7 +116,7 @@ export function ModelPanel() {
         <Field label="模型精度" value={model.precision} />
       </div>
       <p className="mt-2 text-[11px] text-slate-300">
-        以上参数由 ModelScope 自动获取，不可修改。权重大小 = 参数量 × 精度字节数。
+        以上参数由 ModelScope 自动获取，不可修改。权重大小优先取官方仓库文件体积，缺失时按参数量 × 精度字节数估算。
       </p>
     </div>
   );

@@ -37,6 +37,8 @@ class ModelSpec(BaseModel):
     vocab_size: int = 32000
     # weight storage precision of the checkpoint, used as a fallback for quant
     precision: Quant = "FP16"
+    # 真实权重文件大小 (GB),来自 ModelScope 仓库文件汇总;为空则前端按公式估算
+    weight_size_gb: Optional[float] = None
 
 
 class GpuGroup(BaseModel):
