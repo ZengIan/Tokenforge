@@ -73,42 +73,88 @@ def precision_from_name(model_id: str) -> str:
     return "FP16"
 
 
+def _extract_models(data: Any) -> list[dict]:
+    """从 ModelScope 多种可能的返回结构中提取模型列表。"""
+    if not isinstance(data, dict):
+        return []
+    d = data.get("Data") or data.get("data") or {}
+    if not isinstance(d, dict):
+        return []
+    # 常见结构: Data.Model.Models / Data.Models / Data.model.models
+    for path in (("Model", "Models"), ("model", "models")):
+        node = d.get(path[0])
+        if isinstance(node, dict):
+            models = node.get(path[1])
+            if isinstance(models, list):
+                return models
+    for key in ("Models", "models"):
+        if isinstance(d.get(key), list):
+            return d[key]
+    return []
+
+
+def _model_to_result(m: dict) -> dict[str, Any]:
+    # 兼容字段大小写差异
+    path = m.get("Path") or m.get("path") or ""
+    name = m.get("Name") or m.get("name") or ""
+    model_id = f"{path}/{name}".strip("/")
+    tasks = m.get("Tasks") or m.get("tasks") or []
+    task = ""
+    if tasks and isinstance(tasks, list) and isinstance(tasks[0], dict):
+        task = tasks[0].get("Name") or tasks[0].get("name") or ""
+    return {
+        "model_id": model_id,
+        "name": name,
+        "chinese_name": m.get("ChineseName") or m.get("chineseName") or name,
+        "params_b": params_from_name(model_id),
+        "precision": precision_from_name(model_id),
+        "task": task,
+        "downloads": m.get("Downloads") or m.get("downloads") or 0,
+    }
+
+
+# 官网搜索用的接口在前,SDK 列表接口兜底
+_SEARCH_ENDPOINTS = (
+    "https://modelscope.cn/api/v1/dolphin/models",
+    f"{MS_BASE}/models",
+)
+
+
 async def search_models(query: str, limit: int = 10) -> list[dict[str, Any]]:
     cache_key = f"search:{query}:{limit}"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
 
-    results: list[dict[str, Any]] = []
+    body = {
+        "Name": query,
+        "PageSize": limit,
+        "PageNumber": 1,
+        "SortBy": "Default",
+        "Criterion": [],
+        "SingleCriterion": [],
+        "Target": "",
+    }
+    last_err: Optional[str] = None
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT, headers=_HEADERS) as client:
-            resp = await client.put(
-                f"{MS_BASE}/models",
-                json={"Name": query, "PageSize": limit, "PageNumber": 1},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            models = (data.get("Data") or {}).get("Model", {}).get("Models") or []
-            for m in models:
-                model_id = f"{m.get('Path', '')}/{m.get('Name', '')}".strip("/")
-                results.append(
-                    {
-                        "model_id": model_id,
-                        "name": m.get("Name", ""),
-                        "chinese_name": m.get("ChineseName", "") or m.get("Name", ""),
-                        "params_b": params_from_name(model_id),
-                        "precision": precision_from_name(model_id),
-                        "task": m.get("Tasks", [{}])[0].get("Name", "")
-                        if m.get("Tasks")
-                        else "",
-                        "downloads": m.get("Downloads", 0),
-                    }
-                )
-    except Exception as exc:  # network/parse failure -> graceful degrade
-        return [{"error": str(exc), "model_id": query, "params_b": params_from_name(query)}]
+            for url in _SEARCH_ENDPOINTS:
+                try:
+                    resp = await client.put(url, json=body)
+                    resp.raise_for_status()
+                    models = _extract_models(resp.json())
+                    if models:
+                        results = [_model_to_result(m) for m in models]
+                        _cache_set(cache_key, results)
+                        return results
+                except Exception as exc:  # 试下一个端点
+                    last_err = str(exc)
+                    continue
+    except Exception as exc:
+        last_err = str(exc)
 
-    _cache_set(cache_key, results)
-    return results
+    # 全部失败/无结果 -> 降级,允许用户手动输入参数
+    return [{"error": last_err or "未找到模型", "model_id": query, "params_b": params_from_name(query)}]
 
 
 async def get_model_config(model_id: str) -> dict[str, Any]:
