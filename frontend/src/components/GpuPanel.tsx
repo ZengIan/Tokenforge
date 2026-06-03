@@ -1,10 +1,10 @@
 import { useStore } from "../store";
 
 const PRESETS: { label: string; gpu: string; count: number }[] = [
-  { label: "8×H20-3e", gpu: "H20-3e (141G)", count: 8 },
-  { label: "4×H100", gpu: "H100 SXM (80G)", count: 4 },
-  { label: "8×A100", gpu: "A100 SXM (80G)", count: 8 },
-  { label: "8×910C", gpu: "Ascend 910C (64G)", count: 8 },
+  { label: "8×H20-3e", gpu: "NVIDIA H20-3e (141G)", count: 8 },
+  { label: "8×H100", gpu: "NVIDIA H100 SXM (80G)", count: 8 },
+  { label: "8×A100", gpu: "NVIDIA A100 SXM (80G)", count: 8 },
+  { label: "8×910C", gpu: "华为 Ascend 910C (128G)", count: 8 },
 ];
 
 export function GpuPanel() {
