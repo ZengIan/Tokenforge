@@ -8,6 +8,8 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from .routers import estimate, gpus, models
 
@@ -30,6 +32,15 @@ app.add_middleware(
 app.include_router(gpus.router)
 app.include_router(models.router)
 app.include_router(estimate.router)
+
+# Serve frontend static files (only when dist exists, e.g. in Docker)
+_dist = os.path.join(os.path.dirname(__file__), "../dist")
+if os.path.isdir(_dist):
+    app.mount("/assets", StaticFiles(directory=os.path.join(_dist, "assets")), name="assets")
+
+    @app.get("/{path:path}")
+    async def spa_catchall(path: str) -> FileResponse:
+        return FileResponse(os.path.join(_dist, "index.html"))
 
 
 @app.get("/api/health")
