@@ -6,7 +6,12 @@ export function ResultPanel() {
   const { result, loading, error } = useStore();
 
   const heading = (
-    <h2 className="mb-1 text-sm font-bold text-forge-flame">性能测算结果</h2>
+    <h2 className="mb-1 flex items-center gap-2 text-sm font-bold text-forge-flame">
+      性能测算结果
+      <span className="text-[11px] font-normal text-slate-300">
+        （估算为理论值，实际推理性能请以实测数据为准）
+      </span>
+    </h2>
   );
 
   if (error) {
@@ -29,7 +34,7 @@ export function ResultPanel() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       {heading}
       {!result.analysis_reliable && (
         <div className="rounded-lg border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-[11px] leading-snug text-amber-300">
@@ -78,6 +83,15 @@ function MetricCards({ r }: { r: EstimateResponse }) {
         "并发越大总吞吐越高(直到触及算力/带宽上限)。",
     },
     {
+      label: "可容纳并发",
+      value: fmt(r.max_fit_seqs),
+      unit: "seqs",
+      tip:
+        "= (显存预算 − 权重 − 激活 − 框架开销) ÷ 每路 KV 显存\n" +
+        "显存预算 = 单卡显存 × gpu-memory-utilization × 卡数。\n" +
+        "表示预算内最多能同时容纳多少路并发。",
+    },
+    {
       label: "单请求 TPS",
       value: range(r.single_tps_low, r.single_tps_high),
       unit: "tokens/s",
@@ -89,13 +103,24 @@ function MetricCards({ r }: { r: EstimateResponse }) {
         "区间已用真实部署数据标定，比纯屋顶线更贴近实测。",
     },
     {
-      label: "可容纳并发",
-      value: fmt(r.max_fit_seqs),
-      unit: "seqs",
+      label: "TTFT 首字延迟",
+      value: r.ttft_ms.toFixed(0),
+      unit: "ms",
       tip:
-        "= (显存预算 − 权重 − 激活 − 框架开销) ÷ 每路 KV 显存\n" +
-        "显存预算 = 单卡显存 × gpu-memory-utilization × 卡数。\n" +
-        "表示预算内最多能同时容纳多少路并发。",
+        "= 2 × 激活参数量 × max-num-batched-tokens ÷ (总算力 × 算力利用率)\n" +
+        "即模型把整段问题读一遍(prefill)的时间，决定“第一个字”多久蹦出来。\n" +
+        "MoE 按激活参数算(每 token 只过 top-k 个专家)。",
+    },
+    {
+      label: "TPOT 每字延迟",
+      value: r.tpot_ms.toFixed(2),
+      unit: "ms",
+      tip:
+        "每生成 1 个 token 的耗时(中值)。\n" +
+        "= 权重读取时间 + 每 token 固定开销\n" +
+        "• 权重读取 = 激活权重字节 ÷ (总带宽 × 利用率)\n" +
+        "• 固定开销 = 层数 × 每层开销 ×(MoE/线性/TP/eager 系数)\n" +
+        "batch=1 时固定开销常是主导，所以单请求远低于带宽上限。",
     },
     {
       label: "总显存占用",
@@ -120,31 +145,11 @@ function MetricCards({ r }: { r: EstimateResponse }) {
         "显存预算 = 总显存 × gpu-memory-utilization。\n" +
         "超过 100% 表示放不下。",
     },
-    {
-      label: "TTFT 首字延迟",
-      value: r.ttft_ms.toFixed(0),
-      unit: "ms",
-      tip:
-        "= 2 × 激活参数量 × max-num-batched-tokens ÷ (总算力 × 算力利用率)\n" +
-        "即模型把整段问题读一遍(prefill)的时间，决定“第一个字”多久蹦出来。\n" +
-        "MoE 按激活参数算(每 token 只过 top-k 个专家)。",
-    },
-    {
-      label: "TPOT 每字延迟",
-      value: r.tpot_ms.toFixed(2),
-      unit: "ms",
-      tip:
-        "每生成 1 个 token 的耗时(中值)。\n" +
-        "= 权重读取时间 + 每 token 固定开销\n" +
-        "• 权重读取 = 激活权重字节 ÷ (总带宽 × 利用率)\n" +
-        "• 固定开销 = 层数 × 每层开销 ×(MoE/线性/TP/eager 系数)\n" +
-        "batch=1 时固定开销常是主导，所以单请求远低于带宽上限。",
-    },
   ];
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-8">
       {cards.map((c) => (
-        <div key={c.label} className="card relative p-3">
+        <div key={c.label} className="card relative flex flex-col justify-center p-3" style={{ borderColor: 'rgba(240, 237, 235, 0.4)' }}>
           <div className="flex items-center gap-1 text-[11px] text-slate-300">
             {c.label}
             <Tip text={c.tip} />
@@ -180,16 +185,21 @@ function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
   const kvLimited = r.memory.kv_cache_gb < r.memory.kv_cache_limit_gb * 0.99;
   return (
     <div className="card relative">
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-1 flex items-center">
         <h3 className="flex items-center gap-1 text-xs font-bold text-slate-300">
           显存分解
           <Tip text={MEM_FORMULA} />
         </h3>
-        <span className={"text-xs " + (r.fits ? "text-emerald-400" : "text-red-400")}>
+        {kvLimited && (
+          <span className="hidden flex-1 text-center text-[11px] text-sky-300 lg:inline">
+            KV Cache 实际分配 {r.memory.kv_cache_gb.toFixed(2)}GB（上限 {r.memory.kv_cache_limit_gb.toFixed(2)}GB），按预算最多容纳 {r.memory.max_kv_seqs} 路并发。
+          </span>
+        )}
+        <span className={"ml-auto text-xs " + (r.fits ? "text-emerald-400" : "text-red-400")}>
           {r.fits ? "✓ 可容纳" : "✗ 单卡超限"} · 容量 {r.total_mem_gb.toFixed(0)}GB
         </span>
       </div>
-      <div className="flex h-6 w-full overflow-hidden rounded-lg bg-slate-900">
+      <div className="flex h-5 w-full overflow-hidden rounded-lg bg-slate-900">
         {SEGMENTS.map((s) => {
           const v = r.memory[s.key];
           const pct = (v / total) * 100;
@@ -203,21 +213,15 @@ function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
           ) : null;
         })}
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] sm:grid-cols-4">
+      <div className="mt-1.5 grid grid-cols-2 gap-1 text-[11px] sm:grid-cols-4">
         {SEGMENTS.map((s) => (
           <div key={s.key} className="flex items-center gap-1.5">
-            <span className={"inline-block h-2.5 w-2.5 rounded-sm " + s.color} />
+            <span className={"inline-block h-2 w-2 rounded-sm " + s.color} />
             <span className="text-slate-300">{s.label}</span>
             <span className="text-slate-200">{r.memory[s.key].toFixed(2)}GB</span>
           </div>
         ))}
       </div>
-      {kvLimited && (
-        <p className="mt-1 text-[11px] text-sky-300">
-          KV Cache 实际分配 {r.memory.kv_cache_gb.toFixed(2)}GB（上限 {r.memory.kv_cache_limit_gb.toFixed(2)}GB），
-          按预算最多容纳 {r.memory.max_kv_seqs} 路并发。
-        </p>
-      )}
     </div>
   );
 }
@@ -250,17 +254,17 @@ function Bottleneck({ r }: { r: EstimateResponse }) {
             参数存疑 · 仅供参考
           </span>
         )}
+        <span className="ml-auto flex items-center gap-1 text-[10px] text-slate-300">
+          计算经验值(影响最终计算结果)：算力利用率 {(r.effective_compute_util * 100).toFixed(0)}% · 带宽利用率{" "}
+          {(r.effective_mem_util * 100).toFixed(0)}%
+          <Tip text={COEF_TIP} />
+        </span>
       </h3>
-      <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-slate-200">
+      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-slate-200">
         {r.suggestions.map((s, i) => (
           <li key={i}>{s}</li>
         ))}
       </ul>
-      <p className="mt-2 flex items-center gap-1 text-[11px] text-slate-400">
-        计算系数：算力利用率 {(r.effective_compute_util * 100).toFixed(0)}% · 带宽利用率{" "}
-        {(r.effective_mem_util * 100).toFixed(0)}%
-        <Tip text={COEF_TIP} />
-      </p>
     </div>
   );
 }

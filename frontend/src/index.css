@@ -14,7 +14,7 @@ body {
 
 @layer components {
   .card {
-    @apply rounded-xl border border-slate-700/60 bg-slate-800/40 p-4 shadow-lg;
+    @apply rounded-xl border border-slate-700/60 bg-slate-800/40 p-2.5 shadow-lg;
   }
   .label {
     @apply mb-1 block text-xs font-medium text-slate-300;

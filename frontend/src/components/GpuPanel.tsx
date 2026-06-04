@@ -15,7 +15,23 @@ export function GpuPanel() {
 
   return (
     <div className="card">
-      <h2 className="mb-3 text-sm font-bold text-forge-flame">② GPU 配置</h2>
+      <div className="mb-3 flex items-center gap-8">
+        <h2 className="text-sm font-bold text-forge-flame">② GPU 配置</h2>
+        <div className="flex gap-2.5">
+          {[1, 2, 4, 8, 16, 32].map((n) => (
+            <button
+              key={n}
+              className={
+                "rounded-md border border-slate-600 bg-slate-700/50 px-4 py-1.5 text-[10px] " +
+                (group.count === n ? "border-forge-ember text-forge-ember" : "")
+              }
+              onClick={() => updateGpuGroup(0, { count: n })}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-2">
         <div className="flex items-center gap-2">
