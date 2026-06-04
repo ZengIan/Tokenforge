@@ -71,7 +71,6 @@ function MetricCards({ r }: { r: EstimateResponse }) {
       label: "TPS 总吞吐",
       value: range(r.tps_low, r.tps_high),
       unit: "tokens/s",
-      accent: true,
       tip:
         "保守区间(非理论上限) = 并发数 × 单请求 TPS。\n" +
         "单 token 耗时 = 权重读取(带宽)时间 + 每 token 固定开销。\n" +
@@ -126,9 +125,9 @@ function MetricCards({ r }: { r: EstimateResponse }) {
       value: r.ttft_ms.toFixed(0),
       unit: "ms",
       tip:
-        "= 2 × 参数量 × max-num-batched-tokens ÷ (总算力 × 算力利用率)\n" +
-        "即模型把整段问题读一遍(prefill)的时间，\n" +
-        "决定“第一个字”多久蹦出来。",
+        "= 2 × 激活参数量 × max-num-batched-tokens ÷ (总算力 × 算力利用率)\n" +
+        "即模型把整段问题读一遍(prefill)的时间，决定“第一个字”多久蹦出来。\n" +
+        "MoE 按激活参数算(每 token 只过 top-k 个专家)。",
     },
     {
       label: "TPOT 每字延迟",
@@ -145,25 +144,14 @@ function MetricCards({ r }: { r: EstimateResponse }) {
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-8">
       {cards.map((c) => (
-        <div
-          key={c.label}
-          className={
-            "card relative p-3 " +
-            (c.accent ? "border-forge-ember/60 bg-forge-ember/10" : "")
-          }
-        >
+        <div key={c.label} className="card relative p-3">
           <div className="flex items-center gap-1 text-[11px] text-slate-300">
             {c.label}
             <Tip text={c.tip} />
           </div>
-          <div
-            className={
-              "mt-1 text-xl font-bold " +
-              (c.accent ? "text-forge-ember" : "text-slate-100")
-            }
-          >
-            {c.value}
-            <span className="ml-1 text-xs font-normal text-slate-300">{c.unit}</span>
+          <div className="mt-1 flex items-baseline gap-1 whitespace-nowrap text-slate-100">
+            <span className="text-lg font-bold leading-tight">{c.value}</span>
+            <span className="text-[10px] font-normal text-slate-400">{c.unit}</span>
           </div>
         </div>
       ))}
@@ -234,39 +222,44 @@ function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
   );
 }
 
-const BOTTLENECK_FORMULA =
-  "判定逻辑（单一卡型 / 同构张量并行）：\n" +
-  "• 显存利用率 > 92% → 显存瓶颈 (Memory)\n" +
-  "• decode 受带宽限制(TPOT ≥ 算力下限) → 带宽瓶颈 (Bandwidth)\n" +
-  "• 否则 → 算力瓶颈 (Compute)\n\n" +
-  "本工具仅支持单一卡型同构部署，分析对该场景可靠；\n" +
-  "结果会随参数实时变化，属方向性建议，非精确测量。";
+const BOTTLENECK_LABEL: Record<string, string> = {
+  "Memory Bound": "显存瓶颈",
+  "Bandwidth Bound": "带宽瓶颈",
+  "Compute Bound": "算力瓶颈",
+};
+
+const COEF_TIP =
+  "这两个系数表示“实际能用到的比例”，因为纸面峰值跑不满：\n\n" +
+  "• 算力利用率：真实算力 ÷ 显卡标称算力。受 kernel 效率、TP 通信、" +
+  "小 batch 等影响，vLLM 经验值约 60%。\n" +
+  "• 带宽利用率：真实显存读写速度 ÷ 标称带宽。decode 主要靠它，约 80%。\n\n" +
+  "数值越高代表越接近硬件极限。可在高级参数里手动覆盖来贴合你的实测。";
 
 function Bottleneck({ r }: { r: EstimateResponse }) {
-  const color = !r.analysis_reliable
-    ? "text-slate-400 border-slate-600/60"
-    : r.bottleneck === "Memory Bound"
-    ? "text-red-400 border-red-700/50"
-    : r.bottleneck === "Bandwidth Bound"
-    ? "text-sky-400 border-sky-700/50"
-    : "text-amber-400 border-amber-700/50";
+  const tag = BOTTLENECK_LABEL[r.bottleneck] || r.bottleneck;
   return (
-    <div className={"card relative " + color}>
-      <h3 className="flex items-center gap-1 text-xs font-bold">
-        瓶颈分析 · {r.bottleneck}
-        {!r.analysis_reliable && (
-          <span className="text-slate-500">（参数存疑，仅供参考）</span>
+    <div className="card relative border-slate-600/60 text-slate-300">
+      <h3 className="flex flex-wrap items-center gap-1.5 text-xs font-bold text-forge-flame">
+        优化建议
+        {r.analysis_reliable ? (
+          <span className="chip border-slate-600 text-[10px] text-slate-300">
+            当前瓶颈 · {tag}
+          </span>
+        ) : (
+          <span className="chip border-amber-700/60 text-[10px] text-amber-300">
+            参数存疑 · 仅供参考
+          </span>
         )}
-        <Tip text={BOTTLENECK_FORMULA} className="text-slate-300" />
       </h3>
-      <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-xs text-slate-300">
+      <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-slate-200">
         {r.suggestions.map((s, i) => (
           <li key={i}>{s}</li>
         ))}
       </ul>
-      <p className="mt-2 text-[11px] text-slate-300">
+      <p className="mt-2 flex items-center gap-1 text-[11px] text-slate-400">
         计算系数：算力利用率 {(r.effective_compute_util * 100).toFixed(0)}% · 带宽利用率{" "}
         {(r.effective_mem_util * 100).toFixed(0)}%
+        <Tip text={COEF_TIP} />
       </p>
     </div>
   );

@@ -294,28 +294,24 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     fits = mem.per_gpu_gb <= per_gpu_capacity
     max_fit_seqs = mem.max_kv_seqs
 
-    # ---------------- bottleneck analysis ----------------
-    bottleneck, suggestions = _analyse(
-        mem=mem,
-        total_mem_gb=total_mem_gb,
-        n_gpu=n_gpu,
-        tpot=tpot,
-        decode_compute_t=decode_compute_t,
+    # ---------------- 瓶颈分类 + 按实际参数生成优化建议 ----------------
+    bottleneck = _classify_bottleneck(mem, total_mem_gb, tpot, decode_compute_t)
+    suggestions = _build_suggestions(
+        model=model,
         inf=inf,
+        mem=mem,
+        n_gpu=n_gpu,
+        batch=batch,
+        util=util,
+        fits=fits,
+        max_fit_seqs=max_fit_seqs,
+        bottleneck=bottleneck,
+        tpot_bw=tpot,
+        decode_compute_t=decode_compute_t,
+        tpot_roof=tpot_roof,
+        overhead_s=overhead_s,
+        single_tps=single_tps,
     )
-
-    if not fits:
-        suggestions.insert(
-            0,
-            f"⚠ 超出显存预算!当前配置约可容纳 {max_fit_seqs} 路并发(< max-num-seqs={batch})。"
-            "建议:量化权重(awq/fp8) / 调小 max-model-len 或 max-num-seqs / "
-            "用 fp8 kv-cache / 增加卡数 / 调高 --gpu-memory-utilization。",
-        )
-    elif max_fit_seqs < batch:
-        suggestions.append(
-            f"max-num-seqs={batch} 超过显存可容纳的约 {max_fit_seqs} 路,"
-            "vLLM 实际并发会收敛到该值附近(排队)。"
-        )
 
     # 性能/瓶颈分析的可靠性: 依赖算力&带宽规格。占位估值(source=estimate)或
     # 算力/带宽为 0 时, TPS/延迟/瓶颈判定不可信(显存与可容纳并发仍可参考)。
@@ -357,36 +353,104 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     )
 
 
-def _analyse(
-    *,
-    mem: MemoryBreakdown,
-    total_mem_gb: float,
-    n_gpu: int,
-    tpot: float,
-    decode_compute_t: float,
-    inf: InferenceConfig,
-) -> tuple[str, list[str]]:
-    suggestions: list[str] = []
-
+def _classify_bottleneck(
+    mem: MemoryBreakdown, total_mem_gb: float, tpot_bw: float, decode_compute_t: float
+) -> str:
     util = mem.total_gb / total_mem_gb if total_mem_gb > 0 else 0.0
+    if util > 0.95:
+        return "Memory Bound"
+    return "Bandwidth Bound" if tpot_bw >= decode_compute_t else "Compute Bound"
 
-    # memory pressure wins if we're near capacity
-    if util > 0.92:
-        suggestions.append("显存接近上限,建议量化权重(awq/fp8)或用 fp8 kv-cache、减小并发/上下文。")
-        return "Memory Bound", suggestions
 
-    # decode is bandwidth bound if BW time dominates the compute floor
-    if tpot >= decode_compute_t:
-        ratio = tpot / max(decode_compute_t, 1e-9)
-        suggestions.append(f"Decode 阶段受显存带宽限制(BW瓶颈约{ratio:.1f}×)。")
-        if ratio > 3:
-            suggestions.append("选用更高带宽显卡(如 H20/H200)可直接提升 TPS。")
-        suggestions.append("提高 max-num-seqs 可摊薄权重读取成本,显著提升总 TPS(直到触及算力上限)。")
-        return "Bandwidth Bound", suggestions
+def _build_suggestions(
+    *,
+    model: ModelSpec,
+    inf: InferenceConfig,
+    mem: MemoryBreakdown,
+    n_gpu: int,
+    batch: int,
+    util: float,
+    fits: bool,
+    max_fit_seqs: int,
+    bottleneck: str,
+    tpot_bw: float,
+    decode_compute_t: float,
+    tpot_roof: float,
+    overhead_s: float,
+    single_tps: float,
+) -> list[str]:
+    """根据当前实际参数生成可操作的优化建议(非通用模板)。"""
+    tips: list[str] = []
+    w = mem.weights_gb
 
-    # compute bound
-    ratio = decode_compute_t / max(tpot, 1e-9)
-    suggestions.append(f"Decode 阶段受算力限制(计算瓶颈约{ratio:.1f}×)。")
-    if ratio > 3:
-        suggestions.append("建议增加 GPU 数量或换用更高算力显卡(如 H100/H200)。")
-    return "Compute Bound", suggestions
+    # 1) 放不下: 最高优先, 解决后其它才有意义
+    if not fits:
+        fix = [f"增加卡数(当前 {n_gpu})"]
+        if inf.quantization == "none":
+            fix.append(f"启用 fp8 量化(权重 {w:.0f}→约 {w/2:.0f}GB)")
+        fix.append("或换更大显存卡")
+        tips.append("❗ 放不下:权重+激活已占满单卡预算。先解决显存——" + "、".join(fix) + "。")
+        return tips
+
+    # 2) 并发 vs 显存
+    if max_fit_seqs < batch:
+        opts = []
+        if inf.kv_cache_dtype == "auto":
+            opts.append("--kv-cache-dtype 设 fp8(KV 减半→可容纳翻倍)")
+        if inf.gpu_memory_utilization < 0.9:
+            opts.append(f"--gpu-memory-utilization 由 {inf.gpu_memory_utilization} 提到 0.9")
+        opts.append(f"或把 --max-num-seqs 由 {batch} 降到 {max_fit_seqs}(免排队)")
+        tips.append(
+            f"⚠ max-num-seqs={batch} 实际仅能容纳约 {max_fit_seqs} 路(KV 空间不足),多余请求会排队。可:"
+            + "；".join(opts) + "。"
+        )
+    elif util < 0.55 and max_fit_seqs > batch:
+        tips.append(
+            f"显存仅用 {util*100:.0f}%,还能容纳约 {max_fit_seqs} 路。把 --max-num-seqs 由 {batch} "
+            f"提到约 {max_fit_seqs} 可大幅提升总吞吐(单请求速度不变)。"
+        )
+
+    # 3) enforce-eager(区分架构)
+    if inf.enforce_eager:
+        if model.is_moe or model.is_linear_attn:
+            tips.append(
+                "该模型为 MoE/线性注意力架构,当前 vLLM 通常必须 --enforce-eager;"
+                "单请求提速主要靠升级 vLLM 或等 kernel 优化,堆硬件收效有限。"
+            )
+        else:
+            denom = tpot_roof + overhead_s * CUDA_GRAPH_FACTOR
+            est = 1.0 / denom if denom > 0 else 0.0
+            if est > single_tps * 1.2:
+                tips.append(
+                    f"模型是 dense,可关闭 --enforce-eager(启用 CUDA Graph):"
+                    f"单请求 TPS 预计由约 {single_tps:.0f} 提升到约 {est:.0f} tok/s。"
+                )
+
+    # 4) 量化(未量化且权重占比可观时才提)
+    if inf.quantization == "none" and w >= 2:
+        tips.append(
+            f"未量化。启用 fp8 量化可把权重 {w:.0f}GB 减半、把省下的显存给 KV(可容纳并发约翻倍),"
+            "H 卡还能加速,精度损失通常很小。"
+        )
+
+    # 5) KV 精度(KV 是显存大头, 且并发没受限时)
+    if inf.kv_cache_dtype == "auto" and mem.kv_cache_gb > max(w, 1) and max_fit_seqs >= batch:
+        tips.append(
+            f"KV Cache({mem.kv_cache_gb:.0f}GB)是显存大头。设 --kv-cache-dtype fp8 可让 KV 减半、"
+            "可容纳并发约翻倍。"
+        )
+
+    # 6) 瓶颈方向
+    if bottleneck == "Bandwidth Bound":
+        ratio = tpot_bw / max(decode_compute_t, 1e-9)
+        tips.append(
+            f"瓶颈在显存带宽(约 {ratio:.1f}× 于算力):提高 max-num-seqs 摊薄权重读取可提升总吞吐;"
+            "单请求要更快需更高带宽卡(H20/H200)。"
+        )
+    elif bottleneck == "Compute Bound":
+        ratio = decode_compute_t / max(tpot_bw, 1e-9)
+        tips.append(
+            f"瓶颈在算力(约 {ratio:.1f}× 于带宽):增加卡数或换更高算力卡(H100/H200)。"
+        )
+
+    return tips[:5] if tips else ["当前配置较均衡,无明显瓶颈;可逐步提高 max-num-seqs 压测真实吞吐。"]
