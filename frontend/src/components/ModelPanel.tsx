@@ -209,6 +209,24 @@ export function ModelPanel() {
         <TextField label="默认模型精度" value={model.precision} onChange={(v) => setModel({ precision: v })} />
         <TextField label="张量类型" value={model.tensor_types ?? ""} onChange={(v) => setModel({ tensor_types: v } as any)} />
       </div>
+
+      {(model.is_moe || model.is_linear_attn) && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {model.is_moe && (
+            <span className="chip border-violet-600/60 text-violet-300">
+              MoE · 激活 {model.active_params_b ?? "?"}B / 共 {model.params_b}B
+            </span>
+          )}
+          {model.is_linear_attn && (
+            <span className="chip border-sky-600/60 text-sky-300">
+              线性/混合注意力 · KV×{model.kv_cache_factor ?? 1}
+            </span>
+          )}
+          <span className="text-[11px] leading-5 text-slate-400">
+            已据此修正吞吐(MoE 只读激活权重 · 线性注意力 KV 极小)
+          </span>
+        </div>
+      )}
       <p className="mt-2 text-[11px] text-slate-300">
         以上参数由 ModelScope 自动获取
         {(!model.tensor_types || model.tensor_types === "") && (

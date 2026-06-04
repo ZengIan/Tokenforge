@@ -77,6 +77,19 @@ ACT_ALPHA = 2.0
 # fixed framework + CUDA context overhead per GPU (bytes)
 OVERHEAD_PER_GPU = 1.2 * GB
 
+# ---- 单 token 固定开销模型(decode 小 batch 的现实地板)----
+# 屋顶线只算"权重/带宽时间",但 batch=1 时真正耗时常被 kernel 启动、TP all-reduce
+# 延迟、采样等固定开销主导(尤其 enforce_eager 关掉 CUDA Graph 时)。下列系数按
+# H20 + vLLM 实测点标定: Gemma 60层 dense eager TP2 ≈ 真实 <20 tok/s;
+# Qwen3-Next 48层 MoE+线性 eager TP4 ≈ 真实 ~9 tok/s。
+PER_LAYER_OVERHEAD_MS = 0.60       # 每层每 token 基础开销(eager 口径)
+CUDA_GRAPH_FACTOR = 0.12           # 开启 CUDA Graph(未 enforce_eager)开销大幅降低
+MOE_OVERHEAD_MULT = 1.8            # MoE 的 expert gather/scatter 额外开销
+LINEAR_ATTN_OVERHEAD_MULT = 1.5    # 线性/混合注意力的逐 token 串行递归额外开销
+# 区间(相对中值): 乐观/保守 的开销系数
+OVERHEAD_FAST = 0.70
+OVERHEAD_SLOW = 1.60
+
 
 def _weight_bytes(inf: InferenceConfig) -> float:
     """运行时每参数权重字节数:有量化按量化,否则按 dtype。"""
@@ -125,14 +138,13 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     seq = inf.max_model_len
     active_seqs = inf.max_num_seqs
 
-    # --- weights ---
-    # 优先用 ModelScope 实际权重大小, 否则用 params_b 公式估算
-    if model.weight_size_gb and model.weight_size_gb > 0:
-        weights = model.weight_size_gb * GB * QUANT_OVERHEAD.get(inf.quantization, 1.0)
+    # --- weights (运行时显存, 量化感知) ---
+    # 量化时按运行精度算(官方文件大小可能是另一精度); 不量化且有官方大小则用官方值。
+    if inf.quantization == "none" and model.weight_size_gb and model.weight_size_gb > 0:
+        weights = model.weight_size_gb * GB
     else:
-        params = model.params_b * 1e9
-        wb = _weight_bytes(inf)
-        weights = params * wb * QUANT_OVERHEAD.get(inf.quantization, 1.0)
+        weights = model.params_b * 1e9 * _weight_bytes(inf)
+    weights *= QUANT_OVERHEAD.get(inf.quantization, 1.0)
 
     # --- activations: 峰值 ~ 单次迭代批处理 token 数 (--max-num-batched-tokens) ---
     act = inf.max_num_batched_tokens * model.hidden_size * _act_bytes(inf) * ACT_ALPHA
@@ -159,12 +171,12 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
             kv_dim_full = kv_dim
         kv_full = 2 * n_full * kv_dim_full * seq * active_seqs * kv_b
 
-        kv_theory = (kv_slide + kv_full) / KV_UTIL
+        kv_theory = (kv_slide + kv_full) / KV_UTIL * model.kv_cache_factor
         # 每路平均 KV (用于反推可容纳并发)
-        kv_per_seq = (kv_slide + kv_full) / KV_UTIL / active_seqs if active_seqs > 0 else 0.0
+        kv_per_seq = (kv_slide + kv_full) / KV_UTIL * model.kv_cache_factor / active_seqs if active_seqs > 0 else 0.0
     else:
-        # 标准模型: 所有层缓存完整上下文
-        kv_per_seq = 2 * model.num_layers * kv_dim * seq * kv_b / KV_UTIL
+        # 标准模型: 所有层缓存完整上下文 (线性/混合注意力按 kv_cache_factor 缩减)
+        kv_per_seq = 2 * model.num_layers * kv_dim * seq * kv_b * model.kv_cache_factor / KV_UTIL
         kv_theory = kv_per_seq * active_seqs
 
     non_kv = weights + act + overhead
@@ -227,42 +239,53 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         compute_util *= 0.85
         warnings.append("无高速互联(NVLink/HCCS),TP 通信开销已下调效率 ~15%。")
 
-    # --enforce-eager 关闭 CUDA Graph,decode kernel 启动开销变大
-    if inf.enforce_eager:
-        compute_util *= 0.92
-        mem_util *= 0.95
-
     batch = inf.max_num_seqs  # continuous batching: in-flight sequences
 
-    # KV dimension (same logic as estimate_memory)
-    head_dim = model.hidden_size / max(1, model.num_attention_heads)
-    kv_dim = _kv_heads(model) * head_dim
+    # MoE: decode/prefill 只用激活参数(全部专家常驻显存, 但每 token 只读 top-k)
+    active_params = (model.active_params_b or model.params_b) * 1e9
+    active_ratio = active_params / params if params > 0 else 1.0
 
     # ---------------- PREFILL (compute bound) ----------------
-    # 一次迭代处理 max-num-batched-tokens 个 token, 约等于一个长 prompt 的首字延迟。
-    prefill_flops = 2 * params * inf.max_num_batched_tokens
+    prefill_flops = 2 * active_params * inf.max_num_batched_tokens
     ttft = prefill_flops / (flops_total * compute_util)  # seconds
 
-    # ---------------- DECODE (bandwidth bound) ----------------
-    # 每步搬运: 全部权重 + 当前批当前 token 的 KV。
-    # 权重只需读一次服务整批; KV 随 batch 线性增长。
-    # 注意: mem.kv_cache_gb 是显存预留总量(seq*active_seqs),
-    #       不是每步带宽,每步只读 batch 个 token 的 KV。
-    kv_b = _kv_bytes(inf)
-    kv_per_step = 2 * model.num_layers * kv_dim * batch * kv_b
-    weights_bytes = mem.weights_gb * GB
-    bytes_per_step = weights_bytes + kv_per_step
-    tpot = bytes_per_step / (bw_total * mem_util)  # seconds / token (whole batch)
+    # ---------------- DECODE 屋顶线 ----------------
+    # 每步只读激活权重(KV 读取量随上下文变化, 这里并入下方固定开销, 不重复计)。
+    weight_read_bytes = mem.weights_gb * GB * active_ratio
+    tpot_bw = weight_read_bytes / (bw_total * mem_util)  # 带宽时间
+    decode_compute_t = (2 * active_params * batch) / (flops_total * compute_util)
+    tpot_roof = max(tpot_bw, decode_compute_t)  # 理论屋顶线(每步)
 
-    # compute floor for decode (caps tiny-model TPS)
-    decode_compute_t = (2 * params * batch) / (flops_total * compute_util)
-    tpot_eff = max(tpot, decode_compute_t)
+    # ---------------- 每 token 固定开销(现实地板) ----------------
+    arch_mult = 1.0
+    if model.is_moe:
+        arch_mult *= MOE_OVERHEAD_MULT
+    if model.is_linear_attn:
+        arch_mult *= LINEAR_ATTN_OVERHEAD_MULT
+    tp_mult = 1.0 + 0.15 * (n_gpu - 1)
+    graph_mult = 1.0 if inf.enforce_eager else CUDA_GRAPH_FACTOR
+    overhead_s = (
+        model.num_layers * PER_LAYER_OVERHEAD_MS * arch_mult * tp_mult * graph_mult
+    ) / 1000.0
 
-    # 总吞吐 = 满批稳态生成吞吐
-    tps = batch / tpot_eff if tpot_eff > 0 else 0.0
-    # 单请求生成速度: 一个 decode 步(tpot)每条序列产出 1 个 token => 1/tpot
-    single_tps = 1.0 / tpot_eff if tpot_eff > 0 else 0.0
-    request_latency = ttft + tpot_eff  # 首字 + 单 token
+    # TPOT = 屋顶线 + 固定开销; 区间由开销不确定性给出
+    tpot_mid = tpot_roof + overhead_s
+    tpot_fast = tpot_roof + overhead_s * OVERHEAD_FAST
+    tpot_slow = tpot_roof + overhead_s * OVERHEAD_SLOW
+    tpot_eff = tpot_mid
+
+    def _safe(x: float) -> float:
+        return 1.0 / x if x > 0 else 0.0
+
+    single_tps = _safe(tpot_mid)
+    single_tps_high = _safe(tpot_fast)
+    single_tps_low = _safe(tpot_slow)
+    tps = batch * single_tps
+    tps_high = batch * single_tps_high
+    tps_low = batch * single_tps_low
+    request_latency = ttft + tpot_mid  # 首字 + 单 token
+    # 供瓶颈分析判断带宽 vs 算力
+    tpot = tpot_bw
 
     # --gpu-memory-utilization 限定可用显存预算
     per_gpu_capacity = (total_mem_gb / n_gpu) * inf.gpu_memory_utilization
@@ -316,7 +339,11 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         mem_utilization=util,
         fits=fits,
         tps=tps,
+        tps_low=tps_low,
+        tps_high=tps_high,
         single_tps=single_tps,
+        single_tps_low=single_tps_low,
+        single_tps_high=single_tps_high,
         ttft_ms=ttft * 1000,
         tpot_ms=tpot_eff * 1000,
         request_latency_ms=request_latency * 1000,

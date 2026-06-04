@@ -26,6 +26,10 @@ export interface ModelSpec {
   num_full_attention_layers?: number;
   num_global_key_value_heads?: number | null;
   global_head_dim?: number | null;
+  active_params_b?: number | null;
+  is_moe?: boolean;
+  is_linear_attn?: boolean;
+  kv_cache_factor?: number;
 }
 
 export interface GpuGroup {
@@ -75,7 +79,11 @@ export interface EstimateResponse {
   mem_utilization: number;
   fits: boolean;
   tps: number;
+  tps_low: number;
+  tps_high: number;
   single_tps: number;
+  single_tps_low: number;
+  single_tps_high: number;
   ttft_ms: number;
   tpot_ms: number;
   request_latency_ms: number;
