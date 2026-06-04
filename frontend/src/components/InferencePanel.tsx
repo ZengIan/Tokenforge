@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../store";
-import type { DType, KVCacheDType, Quantization } from "../types";
+import type { DType, InterNode, KVCacheDType, Quantization } from "../types";
 
 const DTYPES: DType[] = ["auto", "float16", "bfloat16", "float32"];
 const QUANTIZATIONS: Quantization[] = [
@@ -31,8 +31,9 @@ const SEQ_PRESETS = [
 
 
 export function InferencePanel() {
-  const { inference, setInference } = useStore();
+  const { inference, setInference, gpuGroups } = useStore();
   const i = inference;
+  const nGpu = gpuGroups.reduce((s, g) => s + g.count, 0);
 
   return (
     <div className="card">
@@ -157,6 +158,30 @@ export function InferencePanel() {
           />
         </div>
       </div>
+
+      {nGpu > 8 && (
+        <div className="mt-2">
+          <Select
+            label={`跨机互联（${Math.ceil(nGpu / 8)} 机 ${nGpu} 卡）`}
+            flag="多机部署"
+            tip={
+              "超过 8 卡就是多机部署，跨机通信比机内 NVLink/HCCS 慢，会拖低算力效率。\n\n" +
+              "• 高速无损(NVLink Switch/HCCS)：跨机也是高速互联，几乎无损耗。\n" +
+              "• InfiniBand/RoCE：常规高速网，约 10% 损耗。\n" +
+              "• 普通以太网：约 25% 损耗，且每 token 跨机延迟更高。\n\n" +
+              "选对你的实际组网方式，估算才准。"
+            }
+            value={i.internode}
+            options={["nvlink", "ib", "ethernet"]}
+            optionLabels={{
+              nvlink: "高速无损 (NVLink Switch/HCCS)",
+              ib: "InfiniBand / RoCE 高速网",
+              ethernet: "普通以太网",
+            }}
+            onChange={(v) => setInference({ internode: v as InterNode })}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -270,6 +295,7 @@ function Select({
   tip,
   value,
   options,
+  optionLabels,
   onChange,
 }: {
   label: string;
@@ -277,6 +303,7 @@ function Select({
   tip: string;
   value: string;
   options: string[];
+  optionLabels?: Record<string, string>;
   onChange: (v: string) => void;
 }) {
   return (
@@ -285,7 +312,7 @@ function Select({
       <select className="input mt-1" value={value} onChange={(e) => onChange(e.target.value)}>
         {options.map((o) => (
           <option key={o} value={o}>
-            {o}
+            {optionLabels?.[o] ?? o}
           </option>
         ))}
       </select>

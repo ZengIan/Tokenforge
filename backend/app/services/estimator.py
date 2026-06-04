@@ -16,6 +16,8 @@ Coordinate system / assumptions
 """
 from __future__ import annotations
 
+import math
+
 from ..models.schemas import (
     EstimateRequest,
     EstimateResponse,
@@ -67,6 +69,21 @@ KV_DTYPE_BYTES: dict[str, float] = {
 # vLLM 的算力/带宽利用率经验系数
 VLLM_COMPUTE_UTIL = 0.60
 VLLM_MEM_UTIL = 0.80
+
+# 单机最多卡数(超过即视为多机/跨机部署)
+GPUS_PER_NODE = 8
+# 跨机互联对算力效率的折扣(乘到 compute_util)
+INTERNODE_COMPUTE_FACTOR = {
+    "nvlink": 1.00,   # NVLink Switch/HCCS 等高速无损 -> 接近无损
+    "ib": 0.90,       # InfiniBand/RoCE 高速网 -> ~10% 损耗
+    "ethernet": 0.75, # 普通以太网 -> ~25% 损耗
+}
+# 跨机互联对每 token 固定开销的放大(跨机 all-reduce/PP 通信延迟更高)
+INTERNODE_OVERHEAD_MULT = {
+    "nvlink": 1.0,
+    "ib": 1.4,
+    "ethernet": 2.2,
+}
 
 # PagedAttention KV-cache packing efficiency
 KV_UTIL = 0.90
@@ -234,10 +251,28 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     compute_util = inf.compute_util if inf.compute_util is not None else VLLM_COMPUTE_UTIL
     mem_util = inf.mem_util if inf.mem_util is not None else VLLM_MEM_UTIL
 
-    # interconnect derate for TP all-reduce when no high-speed link
-    if n_gpu > 1 and not all_nvlink:
+    # ---- 互联通信损耗 ----
+    internode_overhead_mult = 1.0
+    if n_gpu > GPUS_PER_NODE:
+        # 多机/跨机部署: 损耗取决于跨机互联类型
+        n_nodes = math.ceil(n_gpu / GPUS_PER_NODE)
+        f = INTERNODE_COMPUTE_FACTOR.get(inf.internode, 0.90)
+        compute_util *= f
+        internode_overhead_mult = INTERNODE_OVERHEAD_MULT.get(inf.internode, 1.4)
+        if f < 1.0:
+            warnings.append(
+                f"{n_nodes} 机跨机部署({inf.internode}): 跨机通信已下调算力效率 "
+                f"{int(round((1 - f) * 100))}%。若为 NVLink Switch/HCCS 等高速无损互联,"
+                "可将'跨机互联'选为'高速无损'消除此损耗。"
+            )
+        else:
+            warnings.append(
+                f"{n_nodes} 机跨机部署: 已按高速无损互联(NVLink Switch/HCCS)计,跨机通信几乎无损耗。"
+            )
+    elif n_gpu > 1 and not all_nvlink:
+        # 单机但无机内高速互联(PCIe 等)
         compute_util *= 0.85
-        warnings.append("无高速互联(NVLink/HCCS),TP 通信开销已下调效率 ~15%。")
+        warnings.append("机内无高速互联(NVLink/HCCS),TP 通信开销已下调效率 ~15%。")
 
     batch = inf.max_num_seqs  # continuous batching: in-flight sequences
 
@@ -266,6 +301,7 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     graph_mult = 1.0 if inf.enforce_eager else CUDA_GRAPH_FACTOR
     overhead_s = (
         model.num_layers * PER_LAYER_OVERHEAD_MS * arch_mult * tp_mult * graph_mult
+        * internode_overhead_mult
     ) / 1000.0
 
     # TPOT = 屋顶线 + 固定开销; 区间由开销不确定性给出

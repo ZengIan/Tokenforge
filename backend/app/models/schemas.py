@@ -13,6 +13,8 @@ Quantization = Literal[
 ]
 # --kv-cache-dtype: KV 缓存精度
 KVCacheDType = Literal["auto", "fp8", "fp8_e5m2", "fp8_e4m3", "int8"]
+# 跨机(多机)互联类型: 卡数 > 单机上限时生效
+InterNode = Literal["nvlink", "ib", "ethernet"]
 
 
 class GpuSpec(BaseModel):
@@ -88,6 +90,10 @@ class InferenceConfig(BaseModel):
     gpu_memory_utilization: float = Field(0.90, ge=0.1, le=1.0)
     # --enforce-eager: 关闭 CUDA Graph
     enforce_eager: bool = False
+    # 跨机互联(仅卡数 > 单机上限的多机部署生效):
+    #   nvlink = NVLink Switch/HCCS 等高速无损互联(几乎无损)
+    #   ib = InfiniBand/RoCE 高速网; ethernet = 普通以太网
+    internode: InterNode = "ib"
     # optional manual override of bandwidth/compute utilisation [0,1]
     mem_util: Optional[float] = None
     compute_util: Optional[float] = None
