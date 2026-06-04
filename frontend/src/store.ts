@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { buildRecord, type ExportRecord } from "./lib/exportCsv";
+import { buildRecord, type ExportRecord } from "./lib/exportExcel";
 import type {
   EstimateResponse,
   GpuGroup,

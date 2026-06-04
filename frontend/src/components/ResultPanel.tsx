@@ -187,6 +187,7 @@ const MEM_FORMULA =
 function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
   const total = r.memory.total_gb || 1;
   const over = !r.fits; // 需求超过预算 → 会降并发
+  const budget = r.mem_utilization > 0 ? r.memory.total_gb / r.mem_utilization : r.total_mem_gb;
   return (
     <div className="card relative">
       <div className="mb-1 flex items-center">
@@ -203,7 +204,7 @@ function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
           {r.fits
             ? `✓ 可容纳 · 利用 ${(r.mem_utilization * 100).toFixed(0)}%`
             : `⚠ 超预算 · 实际约 ${r.memory.max_kv_seqs} 路`}{" "}
-          · 容量 {r.total_mem_gb.toFixed(0)}GB
+          · 预算 {budget.toFixed(0)}GB
         </span>
       </div>
       <div className="flex h-5 w-full overflow-hidden rounded-lg bg-slate-900">

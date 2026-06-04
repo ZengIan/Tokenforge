@@ -11,7 +11,6 @@ export default function App() {
   const {
     setGpuDb,
     hydrateFromUrl,
-    serializeToUrl,
     model,
     gpuGroups,
     inference,
@@ -51,12 +50,6 @@ export default function App() {
     return () => window.clearTimeout(debounce.current);
   }, [model, gpuGroups, inference, setResult, setLoading, setError]);
 
-  function share() {
-    const url = serializeToUrl();
-    navigator.clipboard?.writeText(url);
-    history.replaceState(null, "", url);
-    alert("分享链接已复制到剪贴板");
-  }
 
   return (
     <div className="min-h-screen bg-forge-iron text-slate-100">
@@ -70,16 +63,13 @@ export default function App() {
               异构 GPU 推理吞吐与显存估算器 · Forge tokens from silicon
             </p>
           </div>
-          <button className="btn" onClick={share}>
-            分享配置
-          </button>
+          <RecordBar />
         </div>
       </header>
 
       {/* 顶部整行：性能测算(指标卡一行 + 显存分解第二行)；下方左输入右推理参数 */}
       <main className="mx-auto max-w-7xl space-y-3 p-4">
         <ResultPanel />
-        <RecordBar />
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           <div className="space-y-4">
             <ModelPanel />
