@@ -1,11 +1,29 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchModelDetail, searchModels } from "../api";
 import { useStore } from "../store";
-import type { SearchResult } from "../types";
+import type { Quantization, SearchResult } from "../types";
+
+// 模型名里的量化标识 -> 量化方式(优先级从上到下)
+const QUANT_NAME_HINTS: [string, Quantization][] = [
+  ["w4a8", "w4a8"],
+  ["w8a8", "w8a8"],
+  ["w4a16", "w4a16"],
+  ["awq", "awq"],
+  ["gptq", "gptq"],
+  ["fp8", "fp8"],
+  ["int8", "int8"],
+  ["int4", "w4a16"],
+];
+
+function quantFromName(modelId: string): Quantization | null {
+  const low = modelId.toLowerCase();
+  for (const [needle, q] of QUANT_NAME_HINTS) if (low.includes(needle)) return q;
+  return null;
+}
 
 export function ModelPanel() {
   const LIMIT = 6;
-  const { model, setModel } = useStore();
+  const { model, setModel, setInference } = useStore();
   const [q, setQ] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen] = useState(false);
@@ -101,6 +119,9 @@ export function ModelPanel() {
     skipNext.current = true; // 防止填入模型名后又自动检索一次
     setOpen(false);
     setQ(r.model_id);
+    // 按模型名自动匹配量化方式(如 ...-w4a8 / -fp8 / -awq)，避免手动选错
+    const q = quantFromName(r.model_id);
+    if (q) setInference({ quantization: q });
     // 官方仓库大小 (StorageSize) 来自搜索结果,作为权重大小的权威来源
     try {
       const detail = await fetchModelDetail(r.model_id);
