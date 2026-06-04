@@ -88,7 +88,7 @@ export default function App() {
       </main>
 
       <footer className="mx-auto max-w-7xl px-4 py-6 text-center text-[11px] text-white">
-        估算为理论近似，实际部署误差目标 &lt;15%。国产卡参数请以厂商规格书或实测为准。
+        估算为理论近似值，实际部署请以实测数据为准。
       </footer>
     </div>
   );

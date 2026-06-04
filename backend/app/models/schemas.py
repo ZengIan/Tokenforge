@@ -37,6 +37,7 @@ class ModelSpec(BaseModel):
     num_layers: int = 32
     num_attention_heads: int = 32
     num_key_value_heads: Optional[int] = None  # GQA; defaults to num_attention_heads
+    head_dim: Optional[int] = None  # 若 config.json 直接提供则优先使用
     vocab_size: int = 32000
     # 默认模型精度 (从 config.json torch_dtype 读取)
     precision: str = "FP16"
@@ -46,6 +47,11 @@ class ModelSpec(BaseModel):
     weight_size_gb: Optional[float] = None
     # 参数量是否从 ModelScope API 准确获取
     params_accurate: bool = False
+    # --- 混合注意力 (如 Gemma4) ---
+    sliding_window: Optional[int] = None  # sliding attention 窗口大小
+    num_full_attention_layers: int = 0  # full_attention 层数;0 表示全是 full/sliding 统一处理
+    num_global_key_value_heads: Optional[int] = None  # full_attention 层的 KV head 数
+    global_head_dim: Optional[int] = None  # full_attention 层的 head_dim
 
 
 class GpuGroup(BaseModel):
@@ -88,10 +94,12 @@ class EstimateRequest(BaseModel):
 class MemoryBreakdown(BaseModel):
     weights_gb: float
     kv_cache_gb: float
+    kv_cache_limit_gb: float  # 显存预算下 KV cache 实际可用上限
     activations_gb: float
     overhead_gb: float
     total_gb: float
     per_gpu_gb: float
+    max_kv_seqs: int  # 按实际 KV 预算可容纳的最大并发数
 
 
 class EstimateResponse(BaseModel):

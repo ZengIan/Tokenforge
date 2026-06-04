@@ -16,11 +16,16 @@ export interface ModelSpec {
   num_layers: number;
   num_attention_heads: number;
   num_key_value_heads: number | null;
+  head_dim?: number | null;
   vocab_size: number;
   precision: string;
   tensor_types?: string;
   weight_size_gb?: number | null;
   params_accurate?: boolean;
+  sliding_window?: number | null;
+  num_full_attention_layers?: number;
+  num_global_key_value_heads?: number | null;
+  global_head_dim?: number | null;
 }
 
 export interface GpuGroup {
@@ -56,10 +61,12 @@ export interface InferenceConfig {
 export interface MemoryBreakdown {
   weights_gb: number;
   kv_cache_gb: number;
+  kv_cache_limit_gb: number;
   activations_gb: number;
   overhead_gb: number;
   total_gb: number;
   per_gpu_gb: number;
+  max_kv_seqs: number;
 }
 
 export interface EstimateResponse {

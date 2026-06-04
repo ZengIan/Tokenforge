@@ -175,15 +175,17 @@ const SEGMENTS = [
 ] as const;
 
 const MEM_FORMULA =
-  "显存由四部分构成：\n" +
+  "显存由四部分构成（KV Cache 按实际显存预算分配，与 vLLM 行为一致）：\n" +
   "• 模型权重：有官方大小用官方；否则 参数量 × 精度字节数 × 量化开销\n" +
-  "• KV Cache = 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9(分页)\n" +
-  "   KV维度 = KV头数 × head_dim（GQA 下 KV头数<注意力头数）\n" +
+  "• KV Cache = min(理论需求, 显存预算 − 权重 − 激活 − 开销)\n" +
+  "   理论需求 = 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9\n" +
+  "   若理论需求 > 预算，vLLM 会自动减少可用 KV 空间\n" +
   "• 激活值 ≈ max-num-batched-tokens × hidden_size × 字节 × 2\n" +
   "• 框架开销 ≈ 每卡 1.2GB（CUDA 上下文等），enforce-eager 省约 0.6GB/卡";
 
 function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
   const total = r.memory.total_gb || 1;
+  const kvLimited = r.memory.kv_cache_gb < r.memory.kv_cache_limit_gb * 0.99;
   return (
     <div className="card relative">
       <div className="mb-2 flex items-center justify-between">
@@ -218,6 +220,12 @@ function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
           </div>
         ))}
       </div>
+      {kvLimited && (
+        <p className="mt-1 text-[11px] text-sky-300">
+          KV Cache 实际分配 {r.memory.kv_cache_gb.toFixed(2)}GB（上限 {r.memory.kv_cache_limit_gb.toFixed(2)}GB），
+          按预算最多容纳 {r.memory.max_kv_seqs} 路并发。
+        </p>
+      )}
     </div>
   );
 }

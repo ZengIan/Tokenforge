@@ -6,6 +6,7 @@ frontend can fall back to manual parameter entry (PRD §6.2).
 """
 from __future__ import annotations
 
+import json
 import re
 import time
 from typing import Any, Optional
@@ -15,7 +16,7 @@ import httpx
 from ..models.schemas import ModelSpec
 
 MS_BASE = "https://modelscope.cn/api/v1"
-TIMEOUT = httpx.Timeout(8.0)
+TIMEOUT = httpx.Timeout(20.0)
 # 浏览器化请求头:ModelScope 的 WAF 常拦截非浏览器 UA / 缺 Referer 的请求 (403)
 _HEADERS = {
     "User-Agent": (
@@ -124,7 +125,7 @@ def _model_to_result(m: dict) -> dict[str, Any]:
         "model_id": model_id,
         "name": name,
         "chinese_name": m.get("ChineseName") or m.get("chineseName") or name,
-        "params_b": params_from_name(model_id) or params_from_storage(storage, model_id),
+        "params_b": params_from_name(model_id),
         "precision": precision_from_name(model_id),
         "task": task,
         "downloads": m.get("Downloads") or m.get("downloads") or 0,
@@ -186,44 +187,125 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
     spec = ModelSpec(model_id=model_id, params_b=params_from_name(model_id) or 0.0)
     spec.precision = precision_from_name(model_id)
     config_found = False
+    name_params = spec.params_b  # from regex
 
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT, headers=_HEADERS) as client:
-            # 0. 模型元数据 (总参数量 + StorageSize → weight_size_gb)
-            meta = await _fetch_model_meta(client, model_id)
-            if meta:
-                if meta.get("params"):
-                    spec.params_b = meta["params"]
-                    spec.params_accurate = True
-                if meta.get("weight_gb"):
-                    spec.weight_size_gb = meta["weight_gb"]
+            import asyncio
 
-            # 1. config.json (架构参数 + 精度)
-            url = f"{MS_BASE}/models/{model_id}/repo?Revision=master&FilePath=config.json"
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                cfg = resp.json()
-                if isinstance(cfg, dict) and cfg:
-                    config_found = True
-                    spec.hidden_size = int(cfg.get("hidden_size", spec.hidden_size))
-                    spec.num_layers = int(cfg.get("num_hidden_layers", spec.num_layers))
-                    spec.num_attention_heads = int(
-                        cfg.get("num_attention_heads", spec.num_attention_heads)
-                    )
-                    if cfg.get("num_key_value_heads") is not None:
-                        spec.num_key_value_heads = int(cfg["num_key_value_heads"])
-                    spec.vocab_size = int(cfg.get("vocab_size", spec.vocab_size))
+            api_url = f"{MS_BASE}/models/{model_id}"
 
-                    # 默认模型精度: torch_dtype
-                    td = cfg.get("torch_dtype")
-                    if td:
-                        spec.precision = str(td).replace("bfloat", "BF").replace("float", "FP").upper()
-                    # 张量类型: quantization_config + tensor metadata
-                    spec.tensor_types = _extract_tensor_types(cfg, model_id)
+            async def fetch_cfg():
+                url = f"{MS_BASE}/models/{model_id}/repo?Revision=master&FilePath=config.json"
+                try:
+                    r = await client.get(url)
+                    if r.status_code != 200:
+                        return {"__error": f"status {r.status_code}"}
+                    data = r.json()
+                except Exception as exc:
+                    return {"__error": str(exc)}
 
-            # 2. 如果步骤0未拿到参数，用权重大小兜底推算
-            if spec.params_b == 0 and spec.weight_size_gb:
-                inferred = params_from_storage(spec.weight_size_gb * 1e9, model_id)
+                # 递归/迭代解包，直到找到 config dict（含 hidden_size 或 text_config）
+                candidates = [data]
+                seen = set()
+                while candidates:
+                    cur = candidates.pop(0)
+                    cid = id(cur)
+                    if cid in seen:
+                        continue
+                    seen.add(cid)
+
+                    if isinstance(cur, dict):
+                        # 找到目标 dict
+                        if "hidden_size" in cur or "text_config" in cur or "num_hidden_layers" in cur:
+                            return cur
+                        # 把可能包装字段加入候选
+                        for k in ("Data", "data", "Content", "content", "text", "result", "Result"):
+                            if k in cur:
+                                candidates.append(cur[k])
+                    elif isinstance(cur, str) and cur.strip().startswith("{"):
+                        try:
+                            candidates.append(json.loads(cur))
+                        except Exception:
+                            pass
+                    elif isinstance(cur, list) and cur:
+                        candidates.extend(cur)
+
+                return {"__error": "no hidden_size found", "preview": str(data)[:300]}
+
+            async def fetch_meta():
+                r = await client.get(api_url)
+                if r.status_code != 200:
+                    return (None, None, None)
+                data = r.json()
+                dd = (data.get("Data") or data) if isinstance(data, dict) else {}
+                # 权重大小
+                s = dd.get("StorageSize") or dd.get("storageSize")
+                wgb = round(s / 1e9, 2) if isinstance(s, (int, float)) and s > 0 else None
+                # 参数量: ReadMeContent 中的 "XB in total"
+                txt = dd.get("ReadMeContent") or dd.get("Description") or ""
+                m = re.search(r'(\d+(?:\.\d+)?)\s*[bB]\s+in\s+total', txt)
+                p = float(m.group(1)) if m else None
+                return wgb, p, dd
+
+            cfg, (wgb, html_params, _) = await asyncio.gather(fetch_cfg(), fetch_meta())
+            cfg_error = cfg.get("__error") if isinstance(cfg, dict) else str(cfg)
+
+            # 处理 config.json (支持顶层或 text_config 嵌套)
+            if cfg and isinstance(cfg, dict) and not cfg_error:
+                config_found = True
+                tc = cfg.get("text_config") if isinstance(cfg.get("text_config"), dict) else {}
+
+                def _c(key: str):
+                    """优先顶层，其次 text_config。"""
+                    return cfg.get(key, tc.get(key))
+
+                if _c("hidden_size") is not None:
+                    spec.hidden_size = int(_c("hidden_size"))
+                if _c("num_hidden_layers") is not None:
+                    spec.num_layers = int(_c("num_hidden_layers"))
+                if _c("num_attention_heads") is not None:
+                    spec.num_attention_heads = int(_c("num_attention_heads"))
+                if _c("num_key_value_heads") is not None:
+                    spec.num_key_value_heads = int(_c("num_key_value_heads"))
+                if _c("vocab_size") is not None:
+                    spec.vocab_size = int(_c("vocab_size"))
+
+                # 混合注意力 (Gemma4 等)
+                sw = _c("sliding_window")
+                if sw is not None:
+                    spec.sliding_window = int(sw)
+                layer_types = _c("layer_types")
+                if isinstance(layer_types, list):
+                    spec.num_full_attention_layers = layer_types.count("full_attention")
+                ngkv = _c("num_global_key_value_heads")
+                if ngkv is not None:
+                    spec.num_global_key_value_heads = int(ngkv)
+                ghd = _c("global_head_dim")
+                if ghd is not None:
+                    spec.global_head_dim = int(ghd)
+                # 如果 text_config 里直接给了 head_dim，用它来校正 head_dim
+                hd = _c("head_dim")
+                if hd is not None:
+                    spec.head_dim = int(hd)
+
+                td = cfg.get("torch_dtype") or tc.get("torch_dtype") or cfg.get("dtype") or tc.get("dtype")
+                if td:
+                    spec.precision = str(td).replace("bfloat", "BF").replace("float", "FP").upper()
+                spec.tensor_types = _extract_tensor_types(cfg, model_id)
+
+            # 处理权重
+            if wgb:
+                spec.weight_size_gb = wgb
+
+            # 处理参数量
+            if html_params:
+                spec.params_b = html_params
+                spec.params_accurate = True
+            elif name_params > 0:
+                spec.params_accurate = True
+            elif wgb:
+                inferred = params_from_storage(wgb * 1e9, model_id)
                 if inferred:
                     spec.params_b = inferred
                     spec.params_accurate = False
@@ -232,6 +314,8 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
 
     out = spec.model_dump()
     out["config_found"] = config_found
+    if not config_found and cfg_error:
+        out["config_error"] = cfg_error
     _cache_set(cache_key, out)
     return out
 
@@ -276,25 +360,37 @@ def _extract_tensor_types(cfg: dict, model_id: str) -> str:
 
 
 async def _fetch_model_meta(client: httpx.AsyncClient, model_id: str) -> Optional[dict]:
-    """从 /api/v1/models/{id} 获取 ModelScope 官方的总参数量和 StorageSize。"""
+    """从 ModelScope 页面和 API 获取参数量和 StorageSize。"""
     try:
-        url = f"{MS_BASE}/models/{model_id}"
-        resp = await client.get(url)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        if not isinstance(data, dict):
-            return None
-        d = data.get("Data") or data
-        if not isinstance(d, dict):
-            return None
         result: dict = {}
-        tp = d.get("TotalParameters") or d.get("totalParameters")
-        if tp is not None:
-            result["params"] = float(tp)
-        storage = d.get("StorageSize") or d.get("storageSize")
-        if isinstance(storage, (int, float)) and storage > 0:
-            result["weight_gb"] = round(storage / 1e9, 2)
+
+        # 1. API 获取 StorageSize
+        api_url = f"{MS_BASE}/models/{model_id}"
+        api_resp = await client.get(api_url)
+        if api_resp.status_code == 200:
+            data = api_resp.json()
+            if isinstance(data, dict):
+                d = data.get("Data") or data
+                if isinstance(d, dict):
+                    storage = d.get("StorageSize") or d.get("storageSize")
+                    if isinstance(storage, (int, float)) and storage > 0:
+                        result["weight_gb"] = round(storage / 1e9, 2)
+
+        # 2. HTML 页面提取参数量 (API 无此字段)
+        page_url = f"https://modelscope.cn/models/{model_id}"
+        html_headers = {**_HEADERS, "Accept": "text/html,application/xhtml+xml"}
+        page_resp = await client.get(page_url, headers=html_headers)
+        if page_resp.status_code == 200:
+            html = page_resp.text
+            # 匹配页面中的参数量显示: 80B / 80.0B / 7.2B 等
+            import re
+            m = re.search(r'(\d+(?:\.\d+)?)\s*[bB]', html)
+            if m:
+                try:
+                    result["params"] = float(m.group(1))
+                except ValueError:
+                    pass
+
         return result if result else None
     except Exception:
         pass

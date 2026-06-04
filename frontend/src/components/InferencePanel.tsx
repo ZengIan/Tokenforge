@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useStore } from "../store";
 import type { DType, KVCacheDType, Quantization } from "../types";
 
@@ -21,6 +22,13 @@ const LEN_PRESETS = [
   { label: "128K", v: 131072 },
   { label: "256K", v: 262144 },
 ];
+
+const SEQ_PRESETS = [
+  { label: "8", v: 8 },
+  { label: "16", v: 16 },
+  { label: "32", v: 32 },
+];
+
 
 export function InferencePanel() {
   const { inference, setInference } = useStore();
@@ -62,6 +70,8 @@ export function InferencePanel() {
         min={1}
         max={8192}
         onChange={(v) => setInference({ max_num_seqs: v })}
+        presets={SEQ_PRESETS}
+        onPreset={(v) => setInference({ max_num_seqs: v })}
       />
       <NumberField
         label="最大批处理 Token 数"
@@ -87,8 +97,9 @@ export function InferencePanel() {
           "调小：更安全不易崩，但能服务的人数变少。"
         }
         value={i.gpu_memory_utilization}
-        min={0.1}
+        min={0.10}
         max={1}
+        hasDecimal
         onChange={(v) => setInference({ gpu_memory_utilization: v })}
       />
 
@@ -194,6 +205,7 @@ function NumberField({
   onChange,
   presets,
   onPreset,
+  hasDecimal,
 }: {
   label: string;
   flag: string;
@@ -204,38 +216,50 @@ function NumberField({
   onChange: (v: number) => void;
   presets?: { label: string; v: number }[];
   onPreset?: (v: number) => void;
+  hasDecimal?: boolean;
 }) {
+  const allowDot = hasDecimal === true;
+  const [local, setLocal] = useState(String(value));
+  useEffect(() => { setLocal(String(value)); }, [value]);
+
+  function commit() {
+    const n = Number(local);
+    if (!isNaN(n)) onChange(clamp(n, min, max));
+    else setLocal(String(value));
+  }
+
   return (
     <div className="mb-2">
-      <div className="flex items-center justify-between">
-        <LabelRow label={label} flag={flag} tip={tip} />
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <LabelRow label={label} flag={flag} tip={tip} />
+          {presets && (
+            <div className="flex gap-1">
+              {presets.map((p) => (
+                <button
+                  key={p.label}
+                  className={
+                    "chip text-[10px] " +
+                    (value === p.v ? "border-forge-ember text-forge-ember" : "")
+                  }
+                  onClick={() => { onPreset?.(p.v); setLocal(String(p.v)); }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <input
           type="text"
-          inputMode="numeric"
-          className="input w-32 cursor-text text-right"
-          value={value}
-          onChange={(e) => {
-            const n = Number(e.target.value);
-            if (!isNaN(n)) onChange(clamp(n, min, max));
-          }}
+          inputMode={allowDot ? "decimal" : "numeric"}
+          className="input w-32 shrink-0 cursor-text text-right"
+          value={local}
+          onChange={(e) => setLocal(e.target.value.replace(allowDot ? /[^0-9.]/g : /\D/g, ""))}
+          onBlur={commit}
+          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
         />
       </div>
-      {presets && (
-        <div className="mt-1 flex gap-1">
-          {presets.map((p) => (
-            <button
-              key={p.label}
-              className={
-                "chip text-[10px] " +
-                (value === p.v ? "border-forge-ember text-forge-ember" : "")
-              }
-              onClick={() => onPreset?.(p.v)}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

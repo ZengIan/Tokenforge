@@ -109,10 +109,10 @@ export function ModelPanel() {
         weight_size_gb: r.weight_size_gb ?? detail.weight_size_gb,
       });
     } catch {
-      // graceful fallback: keep name + inferred params, let user edit manually
+      // 详情API失败: 保留当前参数,更新名称和权重大小
       setModel({
         model_id: r.model_id,
-        params_b: r.params_b || model.params_b,
+        params_accurate: false,
         weight_size_gb: r.weight_size_gb,
       });
     }
@@ -196,19 +196,14 @@ export function ModelPanel() {
 
       {/* model parameters */}
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <NumField label="参数量 (B)" value={model.params_b} onChange={(v) => setModel({ params_b: v })} decimals={2} />
-        <NumField
-          label="权重大小 (GB)"
-          value={model.weight_size_gb ?? 0}
-          onChange={(v) => setModel({ weight_size_gb: v })}
-          decimals={2}
-        />
+        <NumField label="参数量 (B)" value={model.params_b} onChange={(v) => setModel({ params_b: v })} />
+        <NumField label="权重大小 (GB)" value={model.weight_size_gb ?? 0} onChange={(v) => setModel({ weight_size_gb: v })} />
         <NumField label="层数" value={model.num_layers} onChange={(v) => setModel({ num_layers: v })} />
         <NumField label="隐藏层" value={model.hidden_size} onChange={(v) => setModel({ hidden_size: v })} />
         <NumField label="注意力头数" value={model.num_attention_heads} onChange={(v) => setModel({ num_attention_heads: v })} />
         <NumField
           label="KV 头数 (GQA)"
-          value={model.num_key_value_heads ?? model.num_attention_heads}
+          value={model.num_key_value_heads ?? 0}
           onChange={(v) => setModel({ num_key_value_heads: v })}
         />
         <TextField label="默认模型精度" value={model.precision} onChange={(v) => setModel({ precision: v })} />
@@ -234,7 +229,16 @@ export function ModelPanel() {
   );
 }
 
-function NumField({ label, value, onChange, decimals }: { label: string; value: number; onChange: (v: number) => void; decimals?: number }) {
+function NumField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  const [local, setLocal] = useState(String(value));
+  useEffect(() => { setLocal(String(value)); }, [value]);
+
+  function commit() {
+    const n = Number(local);
+    if (!isNaN(n)) onChange(n);
+    else setLocal(String(value));
+  }
+
   return (
     <div>
       <span className="label">{label}</span>
@@ -242,11 +246,10 @@ function NumField({ label, value, onChange, decimals }: { label: string; value: 
         type="text"
         inputMode="decimal"
         className="input cursor-text"
-        value={decimals != null ? value.toFixed(decimals) : value}
-        onChange={(e) => {
-          const n = Number(e.target.value);
-          if (!isNaN(n)) onChange(n);
-        }}
+        value={local}
+        onChange={(e) => setLocal(e.target.value.replace(/[^0-9.]/g, ""))}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
       />
     </div>
   );

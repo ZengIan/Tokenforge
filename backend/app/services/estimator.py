@@ -97,7 +97,9 @@ def _kv_bytes(inf: InferenceConfig) -> float:
 
 
 def _kv_heads(model: ModelSpec) -> int:
-    return model.num_key_value_heads or model.num_attention_heads
+    if model.num_key_value_heads is not None and model.num_key_value_heads > 0:
+        return model.num_key_value_heads
+    return model.num_attention_heads
 
 
 def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
@@ -109,7 +111,14 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     if n_gpu <= 0:
         n_gpu = 1
 
-    head_dim = model.hidden_size / max(1, model.num_attention_heads)
+    total_mem_gb = sum(g.spec.mem_gb * g.count for g in req.gpus)
+    budget = total_mem_gb * inf.gpu_memory_utilization
+
+    # head_dim: 优先用 config.json 直接提供的，否则推导
+    if model.head_dim is not None and model.head_dim > 0:
+        head_dim = float(model.head_dim)
+    else:
+        head_dim = model.hidden_size / max(1, model.num_attention_heads)
     kv_dim = _kv_heads(model) * head_dim  # GQA-aware KV width
 
     # KV cache 按 --max-model-len 每路预留, --max-num-seqs 路并发。
@@ -125,11 +134,6 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
         wb = _weight_bytes(inf)
         weights = params * wb * QUANT_OVERHEAD.get(inf.quantization, 1.0)
 
-    # --- KV cache (GQA-aware) ---
-    kv_b = _kv_bytes(inf)
-    kv = 2 * model.num_layers * kv_dim * seq * active_seqs * kv_b
-    kv = kv / KV_UTIL  # PagedAttention 分页预留略大于裸算
-
     # --- activations: 峰值 ~ 单次迭代批处理 token 数 (--max-num-batched-tokens) ---
     act = inf.max_num_batched_tokens * model.hidden_size * _act_bytes(inf) * ACT_ALPHA
 
@@ -137,18 +141,51 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     overhead_per_gpu = OVERHEAD_PER_GPU - (0.6 * GB if inf.enforce_eager else 0)
     overhead = overhead_per_gpu * n_gpu
 
-    total = weights + kv + act + overhead
-    # TP shards weights+kv across all cards; activations + overhead are roughly
-    # per-card resident, so per-gpu = sharded part / n + per-card part.
-    per_gpu = (weights + kv) / n_gpu + act / n_gpu + overhead_per_gpu
+    # --- KV cache: 先算理论需求, 再按实际显存预算截断 ---
+    kv_b = _kv_bytes(inf)
+
+    if model.sliding_window and model.num_full_attention_layers > 0:
+        # 混合注意力 (如 Gemma4): sliding 层只缓存 window 内 token, full 层缓存完整 seq
+        n_full = model.num_full_attention_layers
+        n_slide = model.num_layers - n_full
+
+        # sliding attention layers
+        kv_slide = 2 * n_slide * kv_dim * model.sliding_window * active_seqs * kv_b
+
+        # full attention layers (可能用不同的 KV 配置)
+        if model.num_global_key_value_heads and model.global_head_dim:
+            kv_dim_full = model.num_global_key_value_heads * model.global_head_dim
+        else:
+            kv_dim_full = kv_dim
+        kv_full = 2 * n_full * kv_dim_full * seq * active_seqs * kv_b
+
+        kv_theory = (kv_slide + kv_full) / KV_UTIL
+        # 每路平均 KV (用于反推可容纳并发)
+        kv_per_seq = (kv_slide + kv_full) / KV_UTIL / active_seqs if active_seqs > 0 else 0.0
+    else:
+        # 标准模型: 所有层缓存完整上下文
+        kv_per_seq = 2 * model.num_layers * kv_dim * seq * kv_b / KV_UTIL
+        kv_theory = kv_per_seq * active_seqs
+
+    non_kv = weights + act + overhead
+    # 总预算 = budget * GB (bytes)
+    kv_limit = max(0.0, budget * GB - non_kv)
+    kv_actual = min(kv_theory, kv_limit)
+    # 按实际 KV 空间反推最大并发数(类似 vLLM 的 Available KV cache memory / per_seq)
+    max_kv_seqs = int(kv_actual / kv_per_seq) if kv_per_seq > 0 else 0
+
+    total = non_kv + kv_actual
+    per_gpu = (weights + kv_actual) / n_gpu + act / n_gpu + overhead_per_gpu
 
     breakdown = MemoryBreakdown(
         weights_gb=weights / GB,
-        kv_cache_gb=kv / GB,
+        kv_cache_gb=kv_actual / GB,
+        kv_cache_limit_gb=kv_limit / GB,
         activations_gb=act / GB,
         overhead_gb=overhead / GB,
         total_gb=total / GB,
         per_gpu_gb=per_gpu / GB,
+        max_kv_seqs=max_kv_seqs,
     )
     return breakdown, warnings
 
@@ -197,14 +234,24 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
 
     batch = inf.max_num_seqs  # continuous batching: in-flight sequences
 
+    # KV dimension (same logic as estimate_memory)
+    head_dim = model.hidden_size / max(1, model.num_attention_heads)
+    kv_dim = _kv_heads(model) * head_dim
+
     # ---------------- PREFILL (compute bound) ----------------
     # 一次迭代处理 max-num-batched-tokens 个 token, 约等于一个长 prompt 的首字延迟。
     prefill_flops = 2 * params * inf.max_num_batched_tokens
     ttft = prefill_flops / (flops_total * compute_util)  # seconds
 
     # ---------------- DECODE (bandwidth bound) ----------------
-    # 每步搬运: 全部权重 + 当前批 KV; 一次权重读取服务整批,故批越大总吞吐越高。
-    bytes_per_step = (mem.weights_gb + mem.kv_cache_gb) * GB
+    # 每步搬运: 全部权重 + 当前批当前 token 的 KV。
+    # 权重只需读一次服务整批; KV 随 batch 线性增长。
+    # 注意: mem.kv_cache_gb 是显存预留总量(seq*active_seqs),
+    #       不是每步带宽,每步只读 batch 个 token 的 KV。
+    kv_b = _kv_bytes(inf)
+    kv_per_step = 2 * model.num_layers * kv_dim * batch * kv_b
+    weights_bytes = mem.weights_gb * GB
+    bytes_per_step = weights_bytes + kv_per_step
     tpot = bytes_per_step / (bw_total * mem_util)  # seconds / token (whole batch)
 
     # compute floor for decode (caps tiny-model TPS)
@@ -222,15 +269,7 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     budget = per_gpu_capacity * n_gpu
     util = mem.total_gb / budget if budget > 0 else 0.0
     fits = mem.per_gpu_gb <= per_gpu_capacity
-
-    # 显存预算实际可容纳的并发序列数
-    non_kv_gb = mem.total_gb - mem.kv_cache_gb  # 权重+激活+开销
-    kv_per_seq_gb = mem.kv_cache_gb / batch if batch > 0 else 0.0
-    avail_kv_gb = budget - non_kv_gb
-    if kv_per_seq_gb > 0:
-        max_fit_seqs = max(0, int(avail_kv_gb / kv_per_seq_gb))
-    else:
-        max_fit_seqs = batch
+    max_fit_seqs = mem.max_kv_seqs
 
     # ---------------- bottleneck analysis ----------------
     bottleneck, suggestions = _analyse(
@@ -311,10 +350,16 @@ def _analyse(
 
     # decode is bandwidth bound if BW time dominates the compute floor
     if tpot >= decode_compute_t:
-        suggestions.append("Decode 受显存带宽限制,选用更高带宽显卡(如 H20/H200)可直接提升 TPS。")
+        ratio = tpot / max(decode_compute_t, 1e-9)
+        suggestions.append(f"Decode 阶段受显存带宽限制(BW瓶颈约{ratio:.1f}×)。")
+        if ratio > 3:
+            suggestions.append("选用更高带宽显卡(如 H20/H200)可直接提升 TPS。")
         suggestions.append("提高 max-num-seqs 可摊薄权重读取成本,显著提升总 TPS(直到触及算力上限)。")
         return "Bandwidth Bound", suggestions
 
-    # otherwise compute bound (heavy batch)
-    suggestions.append("受算力限制,建议增加 GPU 数量或换用更高算力显卡(如 H100/H200)。")
+    # compute bound
+    ratio = decode_compute_t / max(tpot, 1e-9)
+    suggestions.append(f"Decode 阶段受算力限制(计算瓶颈约{ratio:.1f}×)。")
+    if ratio > 3:
+        suggestions.append("建议增加 GPU 数量或换用更高算力显卡(如 H100/H200)。")
     return "Compute Bound", suggestions

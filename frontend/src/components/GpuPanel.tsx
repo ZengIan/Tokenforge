@@ -1,12 +1,5 @@
 import { useStore } from "../store";
 
-const PRESETS: { label: string; gpu: string; count: number }[] = [
-  { label: "8×H20-3e", gpu: "NVIDIA H20-3e (141G)", count: 8 },
-  { label: "8×H100", gpu: "NVIDIA H100 SXM (80G)", count: 8 },
-  { label: "8×A100", gpu: "NVIDIA A100 SXM (80G)", count: 8 },
-  { label: "8×910C", gpu: "华为 Ascend 910C (128G)", count: 8 },
-];
-
 export function GpuPanel() {
   const { gpuDb, gpuGroups, updateGpuGroup } = useStore();
   const group = gpuGroups[0];
@@ -16,12 +9,6 @@ export function GpuPanel() {
     if (spec) updateGpuGroup(0, { spec });
   }
 
-  function applyPreset(p: { gpu: string; count: number }) {
-    const spec = gpuDb.find((g) => g.name === p.gpu);
-    if (!spec) return;
-    useStore.setState({ gpuGroups: [{ spec, count: p.count }] });
-  }
-
   if (!group) {
     return <div className="card text-slate-300">加载 GPU 卡库中…</div>;
   }
@@ -29,14 +16,6 @@ export function GpuPanel() {
   return (
     <div className="card">
       <h2 className="mb-3 text-sm font-bold text-forge-flame">② GPU 配置</h2>
-
-      <div className="mb-3 flex flex-wrap gap-1.5">
-        {PRESETS.map((p) => (
-          <button key={p.label} className="chip hover:border-forge-ember" onClick={() => applyPreset(p)}>
-            {p.label}
-          </button>
-        ))}
-      </div>
 
       <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-2">
         <div className="flex items-center gap-2">

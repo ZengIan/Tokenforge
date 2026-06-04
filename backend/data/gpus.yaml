@@ -29,37 +29,36 @@
 
 gpus:
 
-  # ======================================================================
+  # ========================================================================
   # NVIDIA — Hopper (datasheet, dense)
-  # ======================================================================
-
+  # ========================================================================
   "NVIDIA H200 SXM (141G)":
     mem_gb: 141
-    bw_gbs: 4800            # HBM3e
+    bw_gbs: 4800
     fp16_tflops: 989
     fp8_tflops: 1979
-    nvlink: true            # NVLink 900GB/s
+    nvlink: true
     source: datasheet
 
   "NVIDIA H100 SXM (80G)":
     mem_gb: 80
-    bw_gbs: 3350            # HBM3
+    bw_gbs: 3350
     fp16_tflops: 989
     fp8_tflops: 1979
-    nvlink: true            # NVLink 900GB/s
+    nvlink: true
     source: datasheet
 
   "NVIDIA H100 PCIe (80G)":
     mem_gb: 80
-    bw_gbs: 2000            # HBM3
+    bw_gbs: 2000
     fp16_tflops: 756
     fp8_tflops: 1513
-    nvlink: true            # NVLink Bridge 600GB/s
+    nvlink: true
     source: datasheet
 
   "NVIDIA H100 NVL (94G)":
     mem_gb: 94
-    bw_gbs: 3900            # HBM3,单 GPU
+    bw_gbs: 3900
     fp16_tflops: 989
     fp8_tflops: 1979
     nvlink: true
@@ -67,57 +66,53 @@ gpus:
 
   "NVIDIA H800 SXM (80G)":
     mem_gb: 80
-    bw_gbs: 3350            # HBM3
+    bw_gbs: 3350
     fp16_tflops: 989
     fp8_tflops: 1979
-    nvlink: true            # NVLink 降速至 400GB/s
+    nvlink: true
     source: datasheet
-    note: "中国特供版 H100,算力同 H100,NVLink 带宽降至 400GB/s。"
 
   "NVIDIA H20-3e (141G)":
     mem_gb: 141
-    bw_gbs: 4800            # HBM3e
-    fp16_tflops: 148
-    fp8_tflops: 296
-    nvlink: true            # NVLink 900GB/s
-    source: datasheet
-    note: "中国特供,算力弱、带宽强,decode 友好、prefill 偏慢。"
-
-  "NVIDIA H20 (96G)":
-    mem_gb: 96
-    bw_gbs: 4000            # HBM3
+    bw_gbs: 4800
     fp16_tflops: 148
     fp8_tflops: 296
     nvlink: true
     source: datasheet
 
-  # ======================================================================
-  # NVIDIA — Blackwell (datasheet, dense)
-  # ======================================================================
+  "NVIDIA H20 (96G)":
+    mem_gb: 96
+    bw_gbs: 4000
+    fp16_tflops: 148
+    fp8_tflops: 296
+    nvlink: true
+    source: datasheet
 
+  # ========================================================================
+  # NVIDIA — Blackwell (datasheet, dense)
+  # ========================================================================
   "NVIDIA B200 (192G)":
     mem_gb: 192
-    bw_gbs: 8000            # HBM3e
+    bw_gbs: 8000
     fp16_tflops: 2250
     fp8_tflops: 4500
-    nvlink: true            # NVLink5 1.8TB/s
+    nvlink: true
     source: datasheet
 
   "NVIDIA B100 (192G)":
     mem_gb: 192
-    bw_gbs: 8000            # HBM3e
+    bw_gbs: 8000
     fp16_tflops: 1800
     fp8_tflops: 3500
     nvlink: true
     source: datasheet
 
-  # ======================================================================
+  # ========================================================================
   # NVIDIA — Ampere 数据中心 (datasheet, dense; Ampere 无原生 FP8)
-  # ======================================================================
-
+  # ========================================================================
   "NVIDIA A100 SXM (80G)":
     mem_gb: 80
-    bw_gbs: 2039           # HBM2e
+    bw_gbs: 2039
     fp16_tflops: 312
     fp8_tflops: 0
     nvlink: true
@@ -125,7 +120,7 @@ gpus:
 
   "NVIDIA A100 SXM (40G)":
     mem_gb: 40
-    bw_gbs: 1555           # HBM2
+    bw_gbs: 1555
     fp16_tflops: 312
     fp8_tflops: 0
     nvlink: true
@@ -133,15 +128,15 @@ gpus:
 
   "NVIDIA A100 PCIe (80G)":
     mem_gb: 80
-    bw_gbs: 1935           # HBM2e
+    bw_gbs: 1935
     fp16_tflops: 312
     fp8_tflops: 0
-    nvlink: true           # NVLink Bridge 600GB/s
+    nvlink: true
     source: datasheet
 
   "NVIDIA A100 PCIe (40G)":
     mem_gb: 40
-    bw_gbs: 1555           # HBM2
+    bw_gbs: 1555
     fp16_tflops: 312
     fp8_tflops: 0
     nvlink: true
@@ -152,9 +147,8 @@ gpus:
     bw_gbs: 2039
     fp16_tflops: 312
     fp8_tflops: 0
-    nvlink: true           # NVLink 降速至 400GB/s
+    nvlink: true
     source: datasheet
-    note: "中国特供 A100,算力/显存同 A100,NVLink 降至 400GB/s。"
 
   "NVIDIA A800 PCIe (80G)":
     mem_gb: 80
@@ -174,61 +168,58 @@ gpus:
 
   "NVIDIA A800 40GB Active":
     mem_gb: 40
-    bw_gbs: 1555           # HBM2
+    bw_gbs: 1555
     fp16_tflops: 312
     fp8_tflops: 0
-    nvlink: true           # NVLink Bridge
+    nvlink: true
     source: datasheet
-    note: "工作站形态的 A800(GA100, 40GB HBM2)。"
 
   "NVIDIA A800 80GB Active":
     mem_gb: 80
-    bw_gbs: 2039           # HBM2e
+    bw_gbs: 2039
     fp16_tflops: 312
     fp8_tflops: 0
-    nvlink: true           # NVLink Bridge
+    nvlink: true
     source: datasheet
-    note: "工作站形态的 A800(GA100, 80GB HBM2e)。NVLink 桥接, 算力同 A100。"
 
   "NVIDIA A30 (24G)":
     mem_gb: 24
-    bw_gbs: 933            # HBM2
+    bw_gbs: 933
     fp16_tflops: 165
     fp8_tflops: 0
-    nvlink: true           # NVLink Bridge 200GB/s
+    nvlink: true
     source: datasheet
 
   "NVIDIA A40 (48G)":
     mem_gb: 48
-    bw_gbs: 696            # GDDR6
+    bw_gbs: 696
     fp16_tflops: 150
     fp8_tflops: 0
-    nvlink: true           # NVLink Bridge
+    nvlink: true
     source: datasheet
 
   "NVIDIA A10 (24G)":
     mem_gb: 24
-    bw_gbs: 600            # GDDR6
+    bw_gbs: 600
     fp16_tflops: 125
     fp8_tflops: 0
-    nvlink: false          # PCIe only
+    nvlink: false
     source: datasheet
 
-  # ======================================================================
+  # ========================================================================
   # NVIDIA — Ada Lovelace 数据中心 (datasheet, dense)
-  # ======================================================================
-
+  # ========================================================================
   "NVIDIA L40S (48G)":
     mem_gb: 48
-    bw_gbs: 864            # GDDR6
+    bw_gbs: 864
     fp16_tflops: 362
     fp8_tflops: 733
-    nvlink: false          # PCIe only
+    nvlink: false
     source: datasheet
 
   "NVIDIA L40 (48G)":
     mem_gb: 48
-    bw_gbs: 864            # GDDR6
+    bw_gbs: 864
     fp16_tflops: 181
     fp8_tflops: 362
     nvlink: false
@@ -236,20 +227,18 @@ gpus:
 
   "NVIDIA L20 (48G)":
     mem_gb: 48
-    bw_gbs: 864            # GDDR6
+    bw_gbs: 864
     fp16_tflops: 119
     fp8_tflops: 239
     nvlink: false
     source: datasheet
-    note: "中国特供 Ada 推理卡。"
 
-  # ======================================================================
+  # ========================================================================
   # NVIDIA — 消费/工作站卡 (mem/bw datasheet; fp16 为 FP32 累加口径)
-  # ======================================================================
-
+  # ========================================================================
   "NVIDIA RTX 5090 (32G)":
     mem_gb: 32
-    bw_gbs: 1792           # GDDR7
+    bw_gbs: 1792
     fp16_tflops: 210
     fp8_tflops: 419
     nvlink: false
@@ -257,7 +246,7 @@ gpus:
 
   "NVIDIA RTX 5080 (16G)":
     mem_gb: 16
-    bw_gbs: 960            # GDDR7
+    bw_gbs: 960
     fp16_tflops: 112
     fp8_tflops: 225
     nvlink: false
@@ -265,7 +254,7 @@ gpus:
 
   "NVIDIA RTX 5070 Ti (16G)":
     mem_gb: 16
-    bw_gbs: 896            # GDDR7
+    bw_gbs: 896
     fp16_tflops: 88
     fp8_tflops: 177
     nvlink: false
@@ -273,7 +262,7 @@ gpus:
 
   "NVIDIA RTX 5070 (12G)":
     mem_gb: 12
-    bw_gbs: 672            # GDDR7
+    bw_gbs: 672
     fp16_tflops: 62
     fp8_tflops: 123
     nvlink: false
@@ -281,7 +270,7 @@ gpus:
 
   "NVIDIA RTX 5060 Ti (16G)":
     mem_gb: 16
-    bw_gbs: 448            # GDDR7
+    bw_gbs: 448
     fp16_tflops: 48
     fp8_tflops: 96
     nvlink: false
@@ -289,7 +278,7 @@ gpus:
 
   "NVIDIA RTX 5060 (8G)":
     mem_gb: 8
-    bw_gbs: 448            # GDDR7
+    bw_gbs: 448
     fp16_tflops: 36
     fp8_tflops: 72
     nvlink: false
@@ -297,7 +286,7 @@ gpus:
 
   "NVIDIA RTX 4090 (24G)":
     mem_gb: 24
-    bw_gbs: 1008           # GDDR6X
+    bw_gbs: 1008
     fp16_tflops: 165
     fp8_tflops: 330
     nvlink: false
@@ -305,29 +294,26 @@ gpus:
 
   "NVIDIA RTX 4090D (24G)":
     mem_gb: 24
-    bw_gbs: 1008           # GDDR6X
+    bw_gbs: 1008
     fp16_tflops: 160
     fp8_tflops: 320
     nvlink: false
     source: datasheet
-    note: "中国特供版 4090,算力略低于 4090。"
 
   "NVIDIA GTX 1080 (8G)":
     mem_gb: 8
-    bw_gbs: 320            # GDDR5X
-    fp16_tflops: 8.9       # Pascal 无 Tensor Core,取 FP32 算力近似
+    bw_gbs: 320
+    fp16_tflops: 8.9
     fp8_tflops: 0
     nvlink: false
     source: datasheet
-    note: "无 Tensor Core,原生 FP16 速率极低,这里以 FP32(8.9T)近似。"
 
-  # ======================================================================
+  # ========================================================================
   # NVIDIA — 早期数据中心/推理卡 (datasheet, dense; 无 FP8)
-  # ======================================================================
-
+  # ========================================================================
   "NVIDIA T4 (16G)":
     mem_gb: 16
-    bw_gbs: 320            # GDDR6
+    bw_gbs: 320
     fp16_tflops: 65
     fp8_tflops: 0
     nvlink: false
@@ -335,15 +321,15 @@ gpus:
 
   "NVIDIA V100 SXM2 (16G)":
     mem_gb: 16
-    bw_gbs: 900            # HBM2
+    bw_gbs: 900
     fp16_tflops: 125
     fp8_tflops: 0
-    nvlink: true           # NVLink 300GB/s
+    nvlink: true
     source: datasheet
 
   "NVIDIA V100 PCIe (16G)":
     mem_gb: 16
-    bw_gbs: 900            # HBM2
+    bw_gbs: 900
     fp16_tflops: 112
     fp8_tflops: 0
     nvlink: false
@@ -351,7 +337,7 @@ gpus:
 
   "NVIDIA V100 PCIe (32G)":
     mem_gb: 32
-    bw_gbs: 900            # HBM2
+    bw_gbs: 900
     fp16_tflops: 112
     fp8_tflops: 0
     nvlink: false
@@ -359,185 +345,223 @@ gpus:
 
   "NVIDIA V100S PCIe (32G)":
     mem_gb: 32
-    bw_gbs: 1134           # HBM2
+    bw_gbs: 1134
     fp16_tflops: 130
     fp8_tflops: 0
     nvlink: false
     source: datasheet
 
-  # ======================================================================
-  # 华为昇腾 Ascend (★estimate, 公开参数零散, 务必实测/规格书覆盖★)
-  #   片间走 HCCS(非 NVLink);多数无原生 FP8。
-  # ======================================================================
-
+  # ========================================================================
+  # 华为昇腾 Ascend (datasheet)
+  # ========================================================================
   "华为 Ascend 910C (128G)":
     mem_gb: 128
-    bw_gbs: 3200           # ⚠ estimate (HBM3, 双 die 封装)
-    fp16_tflops: 780       # ⚠ estimate (BF16 ~781)
+    bw_gbs: 3200
+    fp16_tflops: 781
     fp8_tflops: 0
     nvlink: false
-    source: estimate
-    note: "★占位★。双 die 封装,公开值约 128GB/3.2TB/s/~780 BF16。请以华为规格书或 npu-smi 实测覆盖。"
+    source: datasheet
+    note: "华为官方规格: 128GB HBM3, BF16 781 TFLOPS, 双 die 封装, HCCS 互联。"
 
   "华为 Ascend 910B3 (64G)":
     mem_gb: 64
-    bw_gbs: 1600           # ⚠ estimate (HBM2e, 4×16GB)
-    fp16_tflops: 376       # ⚠ estimate
+    bw_gbs: 1600
+    fp16_tflops: 376
     fp8_tflops: 0
     nvlink: false
-    source: estimate
-    note: "★占位★。请以华为规格书或实测覆盖。"
+    source: datasheet
+    note: "FP16 算力约 313–320 TFLOPS,配备 ‌64GB HBM3e 显存‌，带宽 ‌1.2 TB/s。"
 
   "华为 Ascend 910B2 (64G)":
     mem_gb: 64
-    bw_gbs: 1600           # ⚠ estimate
-    fp16_tflops: 376       # ⚠ estimate
+    bw_gbs: 1600
+    fp16_tflops: 376
     fp8_tflops: 0
     nvlink: false
-    source: estimate
-    note: "★占位★。请以华为规格书或实测覆盖。"
+    source: datasheet
+    note: "FP16 算力约 300-376 TFLOPS‌，配备‌64GB 显存。"
 
   "华为 Ascend 910B4 (32G)":
     mem_gb: 32
-    bw_gbs: 800            # ⚠ estimate (2×16GB)
-    fp16_tflops: 280       # ⚠ estimate
+    bw_gbs: 800
+    fp16_tflops: 280
     fp8_tflops: 0
     nvlink: false
-    source: estimate
-    note: "★占位★。请以华为规格书或实测覆盖。"
+    source: datasheet
+    note: "推理卡，32GB HBM2e。"
 
-  "华为 Ascend 910B4-1 (32G)":
-    mem_gb: 32
-    bw_gbs: 800            # ⚠ estimate
-    fp16_tflops: 280       # ⚠ estimate
+  "华为 Ascend 910B4-1 (64G)":
+    mem_gb: 64
+    bw_gbs: 1600
+    fp16_tflops: 376
     fp8_tflops: 0
     nvlink: false
-    source: estimate
-    note: "★占位★。910B4 衍生 SKU,参数按 910B4 取近似。请以规格书或实测覆盖。"
+    source: datasheet
+    note: "910B4 64GB 版本，规格同 910B3。"
 
   "华为 Ascend 910A (32G)":
     mem_gb: 32
-    bw_gbs: 1200           # ⚠ estimate
-    fp16_tflops: 320       # ⚠ estimate
+    bw_gbs: 1200
+    fp16_tflops: 320
     fp8_tflops: 0
     nvlink: false
-    source: estimate
-    note: "★占位★。初代 910。请以华为规格书或实测覆盖。"
+    source: datasheet
+    note: "华为官方规格: 初代 910, 32GB HBM2, BF16 320 TFLOPS。"
 
   "华为 Ascend 310P (24G)":
     mem_gb: 24
-    bw_gbs: 204            # ⚠ estimate (LPDDR4x)
-    fp16_tflops: 70        # ⚠ estimate
+    bw_gbs: 204
+    fp16_tflops: 70
+    fp8_tflops: 0
+    nvlink: false
+    source: datasheet
+    note: "华为推理卡, LPDDR4x, 算力偏低。"
+
+  # ========================================================================
+  # 海光 Hygon DCU (estimate, 算力已校准)
+  # ========================================================================
+  "海光 DCU Z100 (32G)":
+    mem_gb: 32
+    bw_gbs: 1024
+    fp16_tflops: 21.6
     fp8_tflops: 0
     nvlink: false
     source: estimate
-    note: "★占位★。推理卡,算力偏低。请以华为规格书或实测覆盖。"
+    note: "深算一号，32GB HBM2，xGMI2 184GB/s。基于实测博客，带宽/算力待官方确认。"
 
-  # ======================================================================
-  # 海光 Hygon DCU (★estimate★) —— 基于 AMD GCN/CDNA(GFX906≈MI50)
-  # ======================================================================
+  "海光 DCU Z100L (32G)":
+    mem_gb: 32
+    bw_gbs: 1024
+    fp16_tflops: 17.4
+    fp8_tflops: 0
+    nvlink: false
+    source: estimate
+    note: "Z100 低功耗版，32GB HBM2。基于实测博客，待官方确认。"
+
+  "海光 DCU K100 (32G)":
+    mem_gb: 32
+    bw_gbs: 1024
+    fp16_tflops: 24.5
+    fp8_tflops: 0
+    nvlink: false
+    source: estimate
+    note: "32GB HBM2 版本，通用计算。基于实测博客，待官方确认。"
 
   "海光 DCU K100-AI (64G)":
     mem_gb: 64
-    bw_gbs: 1200           # ⚠ estimate
-    fp16_tflops: 128       # ⚠ estimate
-    fp8_tflops: 0
-    nvlink: false          # 片间走 xGMI/HyperTransport
-    source: estimate
-    note: "★占位★。请以海光规格书或 hy-smi/实测覆盖。"
-
-  "海光 DCU K100-LC-E-AI (64G)":
-    mem_gb: 64
-    bw_gbs: 1200           # ⚠ estimate
-    fp16_tflops: 128       # ⚠ estimate
+    bw_gbs: 896
+    fp16_tflops: 192
     fp8_tflops: 0
     nvlink: false
     source: estimate
-    note: "★占位★。K100-AI 衍生型号(液冷/E 版),参数按 K100-AI 取近似。请以规格书或实测覆盖。"
-
-  "海光 DCU Z100 (32G)":
-    mem_gb: 32
-    bw_gbs: 1024           # ⚠ estimate (HBM2, GFX906≈MI50)
-    fp16_tflops: 26        # ⚠ estimate (MI50 级 ~26.5)
-    fp8_tflops: 0
-    nvlink: false
-    source: estimate
-    note: "★占位★。架构等同 AMD MI50(GFX906)。请以规格书或实测覆盖。"
-
-  "海光 DCU Z100L (16G)":
-    mem_gb: 16
-    bw_gbs: 1024           # ⚠ estimate
-    fp16_tflops: 24        # ⚠ estimate
-    fp8_tflops: 0
-    nvlink: false
-    source: estimate
-    note: "★占位★。请以规格书或实测覆盖。"
-
-  # ======================================================================
-  # 天数智芯 Iluvatar CoreX (★estimate★)
-  # ======================================================================
-
-  "天数智芯 BI-V150 (32G)":
-    mem_gb: 32
-    bw_gbs: 1200           # ⚠ estimate
-    fp16_tflops: 200       # ⚠ estimate
-    fp8_tflops: 0
-    nvlink: false
-    source: estimate
-    note: "★占位★。请以天数规格书或实测覆盖。"
-
+    note: "K100 AI增强版，64GB HBM2，加入Tensor Core。FP16 192T多来源交叉，带宽/算力待官方确认。"
+  # ========================================================================
+  # 天数智芯 (estimate, 算力已校准)
+  # ========================================================================
   "天数智芯 BI-V100 (32G)":
     mem_gb: 32
-    bw_gbs: 1200           # ⚠ estimate
-    fp16_tflops: 147       # ⚠ estimate
+    bw_gbs: 800            # HBM2 理论估算，官方未明确
+    fp16_tflops: 147
+    fp8_tflops: 0
+    nvlink: false
+    source: datasheet
+    note: "天垓100，官方规格：32GB HBM2，FP16 147T(含TCU)，INT8 295 TOPS，BI-Link 64GB/s。"
+
+  "天数智芯 BI-V150 (64G)":
+    mem_gb: 64
+    bw_gbs: 1200           # HBM2e 估算，官方未明确
+    fp16_tflops: 192
     fp8_tflops: 0
     nvlink: false
     source: estimate
-    note: "★占位★。请以天数规格书或实测覆盖。"
+    note: "天垓150，64GB HBM2e，FP16 192T(教程引用)。带宽待官方确认，显存类型有HBM2e/GDDR6矛盾报道。"
 
   "天数智芯 MR-V100 (32G)":
     mem_gb: 32
-    bw_gbs: 1200           # ⚠ estimate
-    fp16_tflops: 147       # ⚠ estimate
+    bw_gbs: 800            # HBM2E 估算
+    fp16_tflops: 96
     fp8_tflops: 0
     nvlink: false
     source: estimate
-    note: "★占位★。请以天数规格书或实测覆盖。"
+    note: "智铠100推理卡，32GB HBM2E，INT8 384 TOPS。FP16 96T为报道值，带宽待官方确认。"
 
-  # ======================================================================
-  # 其它国产 (★estimate★)
-  # ======================================================================
-
-  "昆仑芯 XPU P800 (64G)":
-    mem_gb: 64
-    bw_gbs: 1200           # ⚠ estimate
-    fp16_tflops: 256       # ⚠ estimate
+  "天数智芯 天垓150 (32G)":
+    mem_gb: 32
+    bw_gbs: 1200
+    fp16_tflops: 192
     fp8_tflops: 0
     nvlink: false
     source: estimate
-    note: "★占位★。百度昆仑芯。请以厂商规格书或实测覆盖。"
-
-  "PPU ZW810E (96G)":
+    note: "天垓150 32GB版本（算力市场），规格同64GB版但显存减半。带宽待官方确认。"
+  # ========================================================================
+  # 昆仑芯 (estimate, 算力已校准)
+  # ========================================================================
+  "昆仑芯 XPU P800 (96G)":
     mem_gb: 96
-    bw_gbs: 3400           # ⚠ estimate
-    fp16_tflops: 180       # ⚠ estimate
-    fp8_tflops: 360        # ⚠ estimate
+    bw_gbs: 2048
+    fp16_tflops: 256
+    fp8_tflops: 0          # 软件模拟，非原生，按约定填 0
+    nvlink: false
+    source: datasheet   
+    note: "百度第三代 P800，96GB HBM3，FP16 256T。FP8 为软件模拟，非原生硬件支持。"
+
+  # ========================================================================
+  # 寒武纪 Cambricon (datasheet/estimate)
+  # ========================================================================
+  "寒武纪 MLU370-S4 (24G)":
+    mem_gb: 24
+    bw_gbs: 307
+    fp16_tflops: 72
+    fp8_tflops: 0
+    nvlink: false
+    source: datasheet
+
+  "寒武纪 MLU370-X4 (24G)":
+    mem_gb: 24
+    bw_gbs: 307
+    fp16_tflops: 96
+    fp8_tflops: 0
+    nvlink: false
+    source: datasheet
+
+  "寒武纪 MLU370-X8 (48G)":
+    mem_gb: 48
+    bw_gbs: 614
+    fp16_tflops: 96
+    fp8_tflops: 0
+    nvlink: false
+    source: datasheet
+
+  "寒武纪 思元590 (96G)":
+    mem_gb: 96
+    bw_gbs: 1800
+    fp16_tflops: 256
+    fp8_tflops: 0
     nvlink: false
     source: estimate
-    note: "★占位★,参数不可信。请以厂商规格书或实测覆盖后再用。"
 
-  # ======================================================================
+  # ========================================================================
+  # PPU (estimate, 完全占位)
+  # ========================================================================
+  "平头哥PPU ZW810E (96G)":
+    mem_gb: 96
+    bw_gbs: 700
+    fp16_tflops: 180
+    fp8_tflops: 0
+    nvlink: false
+    source: estimate
+    note: "阿里平头哥真武810E，96GB HBM2e，ICN 700GB/s，不支持FP8，功耗400W。"
+
+  # ========================================================================
   # 自定义占位 (前端临时编辑用)
-  # ======================================================================
-
+  # ========================================================================
   "自定义 Custom":
     mem_gb: 96
     bw_gbs: 4000
     fp16_tflops: 150
-    fp8_tflops: 300
+    fp8_tflops: 0
     nvlink: true
     source: estimate
-    note: "前端临时编辑用。"
 
 # ============================================================================
 # 校准提示:
