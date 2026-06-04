@@ -3,6 +3,7 @@ import { estimate, fetchGpus } from "./api";
 import { GpuPanel } from "./components/GpuPanel";
 import { InferencePanel } from "./components/InferencePanel";
 import { ModelPanel } from "./components/ModelPanel";
+import { RecordBar } from "./components/RecordBar";
 import { ResultPanel } from "./components/ResultPanel";
 import { useStore } from "./store";
 
@@ -78,6 +79,7 @@ export default function App() {
       {/* 顶部整行：性能测算(指标卡一行 + 显存分解第二行)；下方左输入右推理参数 */}
       <main className="mx-auto max-w-7xl space-y-3 p-4">
         <ResultPanel />
+        <RecordBar />
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           <div className="space-y-4">
             <ModelPanel />

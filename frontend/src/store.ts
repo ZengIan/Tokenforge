@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { buildRecord, type ExportRecord } from "./lib/exportCsv";
 import type {
   EstimateResponse,
   GpuGroup,
@@ -41,6 +42,7 @@ interface State {
   result: EstimateResponse | null;
   loading: boolean;
   error: string | null;
+  records: ExportRecord[];
 
   setGpuDb: (g: GpuSpec[]) => void;
   setModel: (m: Partial<ModelSpec>) => void;
@@ -51,6 +53,9 @@ interface State {
   setResult: (r: EstimateResponse | null) => void;
   setLoading: (b: boolean) => void;
   setError: (e: string | null) => void;
+  addRecord: () => void;
+  removeRecord: (id: string) => void;
+  clearRecords: () => void;
   hydrateFromUrl: () => void;
   serializeToUrl: () => string;
 }
@@ -63,6 +68,7 @@ export const useStore = create<State>((set, get) => ({
   result: null,
   loading: false,
   error: null,
+  records: [],
 
   setGpuDb: (g) =>
     set((s) => ({
@@ -86,6 +92,16 @@ export const useStore = create<State>((set, get) => ({
   setResult: (r) => set({ result: r }),
   setLoading: (b) => set({ loading: b }),
   setError: (e) => set({ error: e }),
+
+  addRecord: () => {
+    const { model, gpuGroups, inference, result } = get();
+    if (!result || gpuGroups.length === 0) return;
+    const rec = buildRecord(model, gpuGroups, inference, result);
+    set((s) => ({ records: [...s.records, rec] }));
+  },
+  removeRecord: (id) =>
+    set((s) => ({ records: s.records.filter((r) => r.id !== id) })),
+  clearRecords: () => set({ records: [] }),
 
   serializeToUrl: () => {
     const { model, gpuGroups, inference } = get();
