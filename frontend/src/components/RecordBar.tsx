@@ -2,7 +2,7 @@ import { useStore } from "../store";
 import { downloadExcel } from "../lib/exportExcel";
 
 export function RecordBar() {
-  const { result, records, addRecord, removeRecord, clearRecords } = useStore();
+  const { result, records, addRecord, clearRecords } = useStore();
 
   return (
     <div className="flex items-center gap-2">
