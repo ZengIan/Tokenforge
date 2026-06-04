@@ -126,7 +126,10 @@ function MetricCards({ r }: { r: EstimateResponse }) {
       label: "总显存占用",
       value: r.memory.total_gb.toFixed(2),
       unit: "GB",
-      tip: '= 模型权重 + KV Cache + 激活值 + 框架开销\n（各部分构成见下方"显存分解"）。',
+      tip:
+        "这套配置的真实显存需求 = 模型权重 + KV Cache + 激活值 + 框架开销\n" +
+        "(KV 按 max-model-len × max-num-seqs 满算)。\n" +
+        "可能超过物理显存——超了说明放不下全部并发，vLLM 会自动降并发(见“可容纳并发”)。",
     },
     {
       label: "单卡占用",
@@ -141,9 +144,10 @@ function MetricCards({ r }: { r: EstimateResponse }) {
       value: (r.mem_utilization * 100).toFixed(0),
       unit: "%",
       tip:
-        "= 总显存占用 ÷ 显存预算\n" +
-        "显存预算 = 总显存 × gpu-memory-utilization。\n" +
-        "超过 100% 表示放不下。",
+        "= 显存需求 ÷ 显存预算(总显存 × gpu-memory-utilization)\n" +
+        "<100%：放得下，还有余量；\n" +
+        "=100%：刚好占满预算；\n" +
+        ">100%：放不下全部请求，vLLM 会把并发降到“可容纳并发”路。",
     },
   ];
   return (
@@ -172,17 +176,17 @@ const SEGMENTS = [
 ] as const;
 
 const MEM_FORMULA =
-  "显存由四部分构成（KV Cache 按实际显存预算分配，与 vLLM 行为一致）：\n" +
+  "显存需求由四部分构成（按满并发满上下文的真实需求，不截断）：\n" +
   "• 模型权重：有官方大小用官方；否则 参数量 × 精度字节数 × 量化开销\n" +
-  "• KV Cache = min(理论需求, 显存预算 − 权重 − 激活 − 开销)\n" +
-  "   理论需求 = 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9\n" +
-  "   若理论需求 > 预算，vLLM 会自动减少可用 KV 空间\n" +
+  "• KV Cache = 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9\n" +
+  "   (线性/混合注意力按 kv_cache_factor 缩减)\n" +
   "• 激活值 ≈ max-num-batched-tokens × hidden_size × 字节 × 2\n" +
-  "• 框架开销 ≈ 每卡 1.2GB（CUDA 上下文等），enforce-eager 省约 0.6GB/卡";
+  "• 框架开销 ≈ 每卡 1.2GB（CUDA 上下文等），enforce-eager 省约 0.6GB/卡\n\n" +
+  "若需求 > 显存预算，vLLM 会自动降低并发(见“可容纳并发”)，不是直接 OOM。";
 
 function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
   const total = r.memory.total_gb || 1;
-  const kvLimited = r.memory.kv_cache_gb < r.memory.kv_cache_limit_gb * 0.99;
+  const over = !r.fits; // 需求超过预算 → 会降并发
   return (
     <div className="card relative">
       <div className="mb-1 flex items-center">
@@ -190,13 +194,16 @@ function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
           显存分解
           <Tip text={MEM_FORMULA} />
         </h3>
-        {kvLimited && (
-          <span className="hidden flex-1 text-center text-[11px] text-sky-300 lg:inline">
-            KV Cache 实际分配 {r.memory.kv_cache_gb.toFixed(2)}GB（上限 {r.memory.kv_cache_limit_gb.toFixed(2)}GB），按预算最多容纳 {r.memory.max_kv_seqs} 路并发。
+        {over && (
+          <span className="hidden flex-1 text-center text-[11px] text-amber-300 lg:inline">
+            需求 {r.memory.total_gb.toFixed(0)}GB 超过预算，实际并发会降到约 {r.memory.max_kv_seqs} 路
           </span>
         )}
-        <span className={"ml-auto text-xs " + (r.fits ? "text-emerald-400" : "text-red-400")}>
-          {r.fits ? "✓ 可容纳" : "✗ 单卡超限"} · 容量 {r.total_mem_gb.toFixed(0)}GB
+        <span className={"ml-auto text-xs " + (r.fits ? "text-emerald-400" : "text-amber-400")}>
+          {r.fits
+            ? `✓ 可容纳 · 利用 ${(r.mem_utilization * 100).toFixed(0)}%`
+            : `⚠ 超预算 · 实际约 ${r.memory.max_kv_seqs} 路`}{" "}
+          · 容量 {r.total_mem_gb.toFixed(0)}GB
         </span>
       </div>
       <div className="flex h-5 w-full overflow-hidden rounded-lg bg-slate-900">

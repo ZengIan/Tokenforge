@@ -197,18 +197,18 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
         kv_theory = kv_per_seq * active_seqs
 
     non_kv = weights + act + overhead
-    # 总预算 = budget * GB (bytes)
+    # 可用于 KV 的预算空间, 用于反推"实际可容纳并发"(vLLM 会按此截断并发)
     kv_limit = max(0.0, budget * GB - non_kv)
-    kv_actual = min(kv_theory, kv_limit)
-    # 按实际 KV 空间反推最大并发数(类似 vLLM 的 Available KV cache memory / per_seq)
-    max_kv_seqs = int(kv_actual / kv_per_seq) if kv_per_seq > 0 else 0
+    max_kv_seqs = int(kv_limit / kv_per_seq) if kv_per_seq > 0 else 0
 
-    total = non_kv + kv_actual
-    per_gpu = (weights + kv_actual) / n_gpu + act / n_gpu + overhead_per_gpu
+    # 显示口径用"真实需求"(KV 按 max_model_len×max_num_seqs 满算, 不截断),
+    # 这样"总显存占用/利用率"才有意义(可 >100%, 表示放不下→会降并发到 max_kv_seqs)。
+    total = non_kv + kv_theory
+    per_gpu = (weights + kv_theory) / n_gpu + act / n_gpu + overhead_per_gpu
 
     breakdown = MemoryBreakdown(
         weights_gb=weights / GB,
-        kv_cache_gb=kv_actual / GB,
+        kv_cache_gb=kv_theory / GB,
         kv_cache_limit_gb=kv_limit / GB,
         activations_gb=act / GB,
         overhead_gb=overhead / GB,
@@ -419,13 +419,15 @@ def _build_suggestions(
     tips: list[str] = []
     w = mem.weights_gb
 
-    # 1) 放不下: 最高优先, 解决后其它才有意义
-    if not fits:
+    # 1) 连 1 路都放不下: 最高优先(权重+激活+单路KV 就超预算)
+    if max_fit_seqs < 1:
         fix = [f"增加卡数(当前 {n_gpu})"]
         if inf.quantization == "none":
             fix.append(f"启用 fp8 量化(权重 {w:.0f}→约 {w/2:.0f}GB)")
-        fix.append("或换更大显存卡")
-        tips.append("❗ 放不下:权重+激活已占满单卡预算。先解决显存——" + "、".join(fix) + "。")
+        if inf.kv_cache_dtype == "auto":
+            fix.append("--kv-cache-dtype 设 fp8")
+        fix.append("或减小 max-model-len / 换更大显存卡")
+        tips.append("❗ 放不下:权重+激活+单路 KV 已超单卡预算。先解决显存——" + "、".join(fix) + "。")
         return tips
 
     # 2) 并发 vs 显存
@@ -437,7 +439,7 @@ def _build_suggestions(
             opts.append(f"--gpu-memory-utilization 由 {inf.gpu_memory_utilization} 提到 0.9")
         opts.append(f"或把 --max-num-seqs 由 {batch} 降到 {max_fit_seqs}(免排队)")
         tips.append(
-            f"⚠ max-num-seqs={batch} 实际仅能容纳约 {max_fit_seqs} 路(KV 空间不足),多余请求会排队。可:"
+            f"⚠ 显存放不下 {batch} 路并发,实际仅能跑约 {max_fit_seqs} 路(vLLM 会自动降并发/排队)。可:"
             + "；".join(opts) + "。"
         )
     elif util < 0.55 and max_fit_seqs > batch:
