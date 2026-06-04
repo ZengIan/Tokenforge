@@ -83,15 +83,6 @@ function MetricCards({ r }: { r: EstimateResponse }) {
         "并发越大总吞吐越高(直到触及算力/带宽上限)。",
     },
     {
-      label: "可容纳并发",
-      value: fmt(r.max_fit_seqs),
-      unit: "seqs",
-      tip:
-        "= (显存预算 − 权重 − 激活 − 框架开销) ÷ 每路 KV 显存\n" +
-        "显存预算 = 单卡显存 × gpu-memory-utilization × 卡数。\n" +
-        "表示预算内最多能同时容纳多少路并发。",
-    },
-    {
       label: "单请求 TPS",
       value: range(r.single_tps_low, r.single_tps_high),
       unit: "tokens/s",
@@ -103,12 +94,21 @@ function MetricCards({ r }: { r: EstimateResponse }) {
         "区间已用真实部署数据标定，比纯屋顶线更贴近实测。",
     },
     {
+      label: "可容纳并发",
+      value: fmt(r.max_fit_seqs),
+      unit: "seqs",
+      tip:
+        "= (显存预算 − 权重 − 激活 − 框架开销) ÷ 每路 KV 显存\n" +
+        "显存预算 = 单卡显存 × gpu-memory-utilization × 卡数。\n" +
+        "表示预算内最多能同时容纳多少路并发。",
+    },
+    {
       label: "TTFT 首字延迟",
       value: r.ttft_ms.toFixed(0),
       unit: "ms",
       tip:
         "= 2 × 激活参数量 × max-num-batched-tokens ÷ (总算力 × 算力利用率)\n" +
-        "即模型把整段问题读一遍(prefill)的时间，决定“第一个字”多久蹦出来。\n" +
+        '即模型把整段问题读一遍(prefill)的时间，决定"第一个字"多久蹦出来。\n' +
         "MoE 按激活参数算(每 token 只过 top-k 个专家)。",
     },
     {
@@ -126,7 +126,7 @@ function MetricCards({ r }: { r: EstimateResponse }) {
       label: "总显存占用",
       value: r.memory.total_gb.toFixed(2),
       unit: "GB",
-      tip: "= 模型权重 + KV Cache + 激活值 + 框架开销\n（各部分构成见下方“显存分解”）。",
+      tip: '= 模型权重 + KV Cache + 激活值 + 框架开销\n（各部分构成见下方"显存分解"）。',
     },
     {
       label: "单卡占用",
@@ -233,7 +233,7 @@ const BOTTLENECK_LABEL: Record<string, string> = {
 };
 
 const COEF_TIP =
-  "这两个系数表示“实际能用到的比例”，因为纸面峰值跑不满：\n\n" +
+  '这两个系数表示"实际能用到的比例"，因为纸面峰值跑不满：\n\n' +
   "• 算力利用率：真实算力 ÷ 显卡标称算力。受 kernel 效率、TP 通信、" +
   "小 batch 等影响，vLLM 经验值约 60%。\n" +
   "• 带宽利用率：真实显存读写速度 ÷ 标称带宽。decode 主要靠它，约 80%。\n\n" +
