@@ -46,6 +46,14 @@ class ModelSpec(BaseModel):
     weight_size_gb: Optional[float] = None
     # 参数量是否从 ModelScope API 准确获取
     params_accurate: bool = False
+    # --- 架构特征(影响吞吐建模) ---
+    # MoE 每 token 激活参数量(B);None 表示 dense(=params_b)。decode 只读激活权重。
+    active_params_b: Optional[float] = None
+    is_moe: bool = False
+    # 线性/混合注意力(如 Qwen3-Next 的 Gated DeltaNet):KV cache 远小于普通注意力
+    is_linear_attn: bool = False
+    # KV cache 系数(相对普通全注意力):1.0=全注意力, ~0.25=混合, ~0.05=纯线性
+    kv_cache_factor: float = 1.0
 
 
 class GpuGroup(BaseModel):
@@ -100,9 +108,13 @@ class EstimateResponse(BaseModel):
     total_mem_gb: float
     mem_utilization: float
     fits: bool
-    # throughput
+    # throughput (mid = 区间中值; low/high = 保守区间)
     tps: float
+    tps_low: float
+    tps_high: float
     single_tps: float  # 单请求生成速度 (tokens/s)
+    single_tps_low: float
+    single_tps_high: float
     ttft_ms: float
     tpot_ms: float
     request_latency_ms: float

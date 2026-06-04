@@ -21,6 +21,10 @@ export interface ModelSpec {
   tensor_types?: string;
   weight_size_gb?: number | null;
   params_accurate?: boolean;
+  active_params_b?: number | null;
+  is_moe?: boolean;
+  is_linear_attn?: boolean;
+  kv_cache_factor?: number;
 }
 
 export interface GpuGroup {
@@ -68,7 +72,11 @@ export interface EstimateResponse {
   mem_utilization: number;
   fits: boolean;
   tps: number;
+  tps_low: number;
+  tps_high: number;
   single_tps: number;
+  single_tps_low: number;
+  single_tps_high: number;
   ttft_ms: number;
   tpot_ms: number;
   request_latency_ms: number;

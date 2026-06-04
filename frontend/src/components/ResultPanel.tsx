@@ -69,23 +69,25 @@ function MetricCards({ r }: { r: EstimateResponse }) {
   const cards: Metric[] = [
     {
       label: "TPS 总吞吐",
-      value: fmt(r.tps),
+      value: range(r.tps_low, r.tps_high),
       unit: "tokens/s",
       accent: true,
       tip:
-        "总吞吐 = 并发数 ÷ 单 token 耗时(TPOT)\n" +
-        "即满批稳态下每秒生成的总 token 数。\n" +
-        "本例 = max-num-seqs ÷ TPOT。",
+        "保守区间(非理论上限) = 并发数 × 单请求 TPS。\n" +
+        "单 token 耗时 = 权重读取(带宽)时间 + 每 token 固定开销。\n" +
+        "区间反映 kernel/通信开销的不确定性，已按实测标定。\n" +
+        "并发越大总吞吐越高(直到触及算力/带宽上限)。",
     },
     {
       label: "单请求 TPS",
-      value: fmt(r.single_tps),
+      value: range(r.single_tps_low, r.single_tps_high),
       unit: "tokens/s",
       tip:
-        "单请求速度 = 1 ÷ TPOT\n" +
-        "一个 decode 步(TPOT)里每条请求各产出 1 个 token，\n" +
-        "所以单条请求每秒约 1/TPOT 个 token。\n" +
-        "总吞吐 = 单请求 TPS × 并发数。",
+        "单条请求每秒生成的 token 数(保守区间，非理论上限)。\n" +
+        "= 1 ÷ 单 token 耗时；单 token 耗时 = 权重读取时间 + 固定开销。\n" +
+        "固定开销含 kernel 启动、TP all-reduce 延迟等，\n" +
+        "在 batch=1 / enforce-eager / MoE·线性注意力 下会显著拉低。\n" +
+        "区间已用真实部署数据标定，比纯屋顶线更贴近实测。",
     },
     {
       label: "可容纳并发",
@@ -133,9 +135,11 @@ function MetricCards({ r }: { r: EstimateResponse }) {
       value: r.tpot_ms.toFixed(2),
       unit: "ms",
       tip:
-        "= (权重字节 + KV 字节) ÷ (总带宽 × 带宽利用率)\n" +
-        "decode 每生成 1 个 token 要把权重和 KV 从显存读一遍，\n" +
-        "主要受显存带宽限制。",
+        "每生成 1 个 token 的耗时(中值)。\n" +
+        "= 权重读取时间 + 每 token 固定开销\n" +
+        "• 权重读取 = 激活权重字节 ÷ (总带宽 × 利用率)\n" +
+        "• 固定开销 = 层数 × 每层开销 ×(MoE/线性/TP/eager 系数)\n" +
+        "batch=1 时固定开销常是主导，所以单请求远低于带宽上限。",
     },
   ];
   return (
@@ -262,4 +266,11 @@ function Bottleneck({ r }: { r: EstimateResponse }) {
 
 function fmt(n: number) {
   return n >= 1000 ? Math.round(n).toLocaleString() : n.toFixed(2);
+}
+
+/** 整数化的区间显示，如 "14–30" */
+function range(low: number, high: number) {
+  const a = Math.round(low);
+  const b = Math.round(high);
+  return a === b ? `${a}` : `${a}–${b}`;
 }

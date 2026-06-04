@@ -132,6 +132,95 @@ def _model_to_result(m: dict) -> dict[str, Any]:
     }
 
 
+# 线性/混合注意力架构关键词 (config.json 的 model_type / architectures)
+_LINEAR_ATTN_HINTS = (
+    "next", "mamba", "rwkv", "retnet", "linear_attn", "lightning",
+    "gated_delta", "hybrid", "minimax", "jamba", "hgrn",
+)
+
+
+def _detect_architecture(cfg: dict, spec: ModelSpec, model_id: str) -> None:
+    """从 config.json 识别 MoE(激活参数量) 与 线性/混合注意力(KV 系数)。"""
+    name_blob = (
+        f"{model_id} {cfg.get('model_type','')} {' '.join(cfg.get('architectures') or [])}"
+    ).lower()
+
+    # ---- MoE ----
+    n_exp = (
+        cfg.get("num_experts")
+        or cfg.get("n_routed_experts")
+        or cfg.get("num_local_experts")
+        or cfg.get("moe_num_experts")
+        or 0
+    )
+    top_k = (
+        cfg.get("num_experts_per_tok")
+        or cfg.get("moe_top_k")
+        or cfg.get("num_experts_per_token")
+        or 0
+    )
+    if n_exp and n_exp > 1:
+        spec.is_moe = True
+        # 优先从模型名解析 "A3B" 这类激活参数量; 否则按 config 估算
+        active = _active_b_from_name(model_id)
+        if active is None and top_k:
+            active = _estimate_active_params_b(cfg, spec, int(n_exp), int(top_k))
+        if active:
+            spec.active_params_b = round(active, 2)
+
+    # ---- 线性/混合注意力 ----
+    if any(h in name_blob for h in _LINEAR_ATTN_HINTS) or cfg.get("linear_attn_config"):
+        spec.is_linear_attn = True
+        # 混合架构常按比例混入少量全注意力层; 纯线性 KV≈0
+        full_ratio = _full_attention_ratio(cfg)
+        spec.kv_cache_factor = round(max(0.03, full_ratio), 3)
+
+
+_ACTIVE_RE = re.compile(r"[aA](\d+(?:\.\d+)?)\s*[bB]\b")
+
+
+def _active_b_from_name(model_id: str) -> Optional[float]:
+    """从 '...-80B-A3B-...' 解析激活参数量 3.0(单位 B)。"""
+    m = _ACTIVE_RE.search(model_id.replace("_", "-"))
+    return float(m.group(1)) if m else None
+
+
+def _full_attention_ratio(cfg: dict) -> float:
+    """混合架构里全注意力层的占比; 拿不到则按 1/4 粗估。"""
+    # 一些 config 用 layer_types / full_attention_interval 描述
+    interval = cfg.get("full_attention_interval") or cfg.get("attn_interval")
+    if isinstance(interval, int) and interval > 0:
+        return 1.0 / interval
+    layer_types = cfg.get("layer_types")
+    if isinstance(layer_types, list) and layer_types:
+        full = sum(1 for t in layer_types if "full" in str(t).lower() or "attention" == str(t).lower())
+        return full / len(layer_types) if full else 0.05
+    return 0.25
+
+
+def _estimate_active_params_b(cfg: dict, spec: ModelSpec, n_exp: int, top_k: int) -> Optional[float]:
+    """按 config 粗估 MoE 每 token 激活参数量(B)。"""
+    h = spec.hidden_size
+    L = spec.num_layers
+    moe_inter = (
+        cfg.get("moe_intermediate_size")
+        or cfg.get("intermediate_size")
+        or 0
+    )
+    if not (h and L and moe_inter):
+        return None
+    shared = cfg.get("shared_expert_intermediate_size") or cfg.get("n_shared_experts") or 0
+    if isinstance(shared, int) and shared and shared < 64:  # 当作"共享专家个数"
+        shared_inter = moe_inter * shared
+    else:
+        shared_inter = shared if isinstance(shared, int) else 0
+    # 每层: 注意力 ~ 4*h*h; 激活专家 MLP ~ top_k * 3 * h * moe_inter; 共享 ~ 3*h*shared_inter
+    per_layer = 4 * h * h + (top_k * 3 * h * moe_inter) + (3 * h * shared_inter)
+    embed = spec.vocab_size * h
+    total_active = L * per_layer + embed
+    return total_active / 1e9
+
+
 # 官网搜索用的接口在前,SDK 列表接口兜底
 _SEARCH_ENDPOINTS = (
     "https://modelscope.cn/api/v1/dolphin/models",
@@ -220,6 +309,9 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
                         spec.precision = str(td).replace("bfloat", "BF").replace("float", "FP").upper()
                     # 张量类型: quantization_config + tensor metadata
                     spec.tensor_types = _extract_tensor_types(cfg, model_id)
+
+                    # 架构特征: MoE / 线性注意力 (影响吞吐建模)
+                    _detect_architecture(cfg, spec, model_id)
 
             # 2. 如果步骤0未拿到参数，用权重大小兜底推算
             if spec.params_b == 0 and spec.weight_size_gb:

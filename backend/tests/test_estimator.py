@@ -71,6 +71,19 @@ def test_fp8_warns_on_ampere():
     assert any("FP8" in w for w in r.warnings)
 
 
+def test_tps_range_brackets_mid():
+    r = estimate(_req("NVIDIA H20-3e (141G)", 2, max_num_seqs=16))
+    assert r.single_tps_low <= r.single_tps <= r.single_tps_high
+    assert r.tps_low <= r.tps <= r.tps_high
+
+
+def test_enforce_eager_lowers_single_tps():
+    on = estimate(_req("NVIDIA H20-3e (141G)", 2, max_num_seqs=16, enforce_eager=True))
+    off = estimate(_req("NVIDIA H20-3e (141G)", 2, max_num_seqs=16, enforce_eager=False))
+    # 关闭 CUDA Graph(eager) 单请求更慢
+    assert on.single_tps < off.single_tps
+
+
 def test_max_fit_seqs_reported():
     # 庞大并发应触发 max_fit_seqs < max_num_seqs
     r = estimate(_req("NVIDIA A100 SXM (80G)", 8, max_num_seqs=2048, max_model_len=131072))
