@@ -336,10 +336,14 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     flops_replica = flops_total * mp_frac
 
     # ---------------- DECODE 屋顶线 ----------------
-    # 每步只读激活权重(KV 读取量随上下文变化, 并入下方固定开销, 不重复计)。
+    # 每步搬运: 激活权重(整批共享一次) + 每条序列各自的 KV(随上下文长度增长)。
     weight_read_bytes = mem.weights_gb * GB * active_ratio / max(1, dp)  # 单副本权重
-    tpot_bw_single = weight_read_bytes / (bw_replica * mem_util)   # 单请求(副本带宽)
-    tpot_bw_total = weight_read_bytes / (bw_total * mem_util)      # 总吞吐(聚合带宽)
+    # 每路 KV 读取量按"实际序列长度"(≈输入长度)缩放; mem.kv_cache_gb 是 max-model-len 满算口径
+    in_len = min(inf.input_len, inf.max_model_len)
+    kv_per_seq = (mem.kv_cache_gb * GB / max(1, batch)) * (in_len / max(1, inf.max_model_len))
+    # 单请求: 权重 + 自己 1 路 KV; 总吞吐: 权重(共享) + 全 batch 的 KV
+    tpot_bw_single = (weight_read_bytes + kv_per_seq) / (bw_replica * mem_util)
+    tpot_bw_total = (weight_read_bytes + kv_per_seq * batch) / (bw_total * mem_util)
     decode_compute_t = (2 * active_params * batch) / (flops_total * compute_util)
 
     # ---------------- 每 token 固定开销(现实地板) ----------------
