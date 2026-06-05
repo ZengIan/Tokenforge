@@ -164,10 +164,11 @@ def _detect_architecture(cfg: dict, spec: ModelSpec, model_id: str) -> None:
             spec.active_params_b = round(active, 2)
 
     # ---- 注意力类型 (MHA/GQA/MQA/MLA), 对 KV cache 影响极大 ----
-    kv_lora = cfg.get("kv_lora_rank")
+    tc_inner = cfg.get("text_config") if isinstance(cfg.get("text_config"), dict) else {}
+    kv_lora = cfg.get("kv_lora_rank", tc_inner.get("kv_lora_rank"))
     if kv_lora and int(kv_lora) > 0:
         # MLA(DeepSeek-V2/V3、GLM-MLA/GlmMoeDSA 等): 低秩潜在 KV, 与头数解耦
-        rope = int(cfg.get("qk_rope_head_dim") or 64)
+        rope = int(cfg.get("qk_rope_head_dim", tc_inner.get("qk_rope_head_dim")) or 64)
         spec.attn_type = "MLA"
         spec.mla_kv_dim = int(kv_lora) + rope
     else:
