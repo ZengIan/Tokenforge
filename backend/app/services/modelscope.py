@@ -55,21 +55,6 @@ def params_from_name(model_id: str) -> Optional[float]:
     return None
 
 
-def params_from_storage(storage_bytes: Optional[float], model_id: str) -> Optional[float]:
-    """正则无法提取参数量时，从 StorageSize 推算（GB ≈ B for FP8, GB/2 for FP16/BF16）。"""
-    if not isinstance(storage_bytes, (int, float)) or storage_bytes <= 0:
-        return None
-    gb = storage_bytes / 1e9
-    low = model_id.lower()
-    if any(k in low for k in ("fp8", "int8", "w8a8", "quant", "gptq", "awq")):
-        bytes_per_param = 1
-    elif any(k in low for k in ("fp16", "bf16", "float16", "bfloat16")):
-        bytes_per_param = 2
-    else:
-        bytes_per_param = 2  # default assumption
-    return round(gb / bytes_per_param, 2)
-
-
 _PRECISION_HINTS = [
     ("int4", "INT4"),
     ("gptq", "GPTQ"),
@@ -121,11 +106,20 @@ def _model_to_result(m: dict) -> dict[str, Any]:
     # 官方仓库大小 (StorageSize, 字节) -> 十进制 GB, 与 estimator GB=10**9 一致
     storage = m.get("StorageSize") or m.get("storageSize")
     weight_size_gb = round(storage / 1e9, 2) if isinstance(storage, (int, float)) and storage > 0 else None
+    # 参数量: 优先从 safetensors.model_size 获取 (精确参数量), 其次从模型名正则
+    params_b = params_from_name(model_id)
+    model_infos = m.get("ModelInfos") if isinstance(m.get("ModelInfos"), dict) else None
+    if model_infos:
+        st = model_infos.get("safetensor") if isinstance(model_infos.get("safetensor"), dict) else None
+        if st:
+            ms = st.get("model_size")
+            if isinstance(ms, (int, float)) and ms > 0:
+                params_b = round(ms / 1e9, 2)
     return {
         "model_id": model_id,
         "name": name,
         "chinese_name": m.get("ChineseName") or m.get("chineseName") or name,
-        "params_b": params_from_name(model_id),
+        "params_b": params_b,
         "precision": precision_from_name(model_id),
         "task": task,
         "downloads": m.get("Downloads") or m.get("downloads") or 0,
@@ -342,19 +336,24 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
             async def fetch_meta():
                 r = await client.get(api_url)
                 if r.status_code != 200:
-                    return (None, None, None)
+                    return (None, None)
                 data = r.json()
                 dd = (data.get("Data") or data) if isinstance(data, dict) else {}
                 # 权重大小
                 s = dd.get("StorageSize") or dd.get("storageSize")
                 wgb = round(s / 1e9, 2) if isinstance(s, (int, float)) and s > 0 else None
-                # 参数量: ReadMeContent 中的 "XB in total"
-                txt = dd.get("ReadMeContent") or dd.get("Description") or ""
-                m = re.search(r'(\d+(?:\.\d+)?)\s*[bB]\s+in\s+total', txt)
-                p = float(m.group(1)) if m else None
-                return wgb, p, dd
+                # 参数量: safetensors 元数据中的 model_size (精确参数量)
+                st_params = None
+                model_infos = dd.get("ModelInfos") if isinstance(dd.get("ModelInfos"), dict) else None
+                if model_infos:
+                    st = model_infos.get("safetensor") if isinstance(model_infos.get("safetensor"), dict) else None
+                    if st:
+                        ms = st.get("model_size")
+                        if isinstance(ms, (int, float)) and ms > 0:
+                            st_params = round(ms / 1e9, 2)
+                return wgb, st_params
 
-            cfg, (wgb, html_params, _) = await asyncio.gather(fetch_cfg(), fetch_meta())
+            cfg, (wgb, st_params) = await asyncio.gather(fetch_cfg(), fetch_meta())
             cfg_error = cfg.get("__error") if isinstance(cfg, dict) else str(cfg)
 
             # 处理 config.json (支持顶层或 text_config 嵌套)
@@ -407,10 +406,10 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
             if wgb:
                 spec.weight_size_gb = wgb
 
-            # 处理参数量: 只认 ModelScope 官方值(ReadMe "X B in total"); 名字含 "XB" 兜底;
-            # 都没有则保持为 0, 由用户照 ModelScope 卡片手动填(不走公式推算, 避免误差)。
-            if html_params:
-                spec.params_b = html_params
+            # 处理参数量: 优先 safetensors.model_size > 模型名正则;
+            # 都没有则保持为 0, 由用户手动填。
+            if st_params and st_params > 0:
+                spec.params_b = st_params
                 spec.params_accurate = True
             elif name_params > 0:
                 spec.params_accurate = True
@@ -462,44 +461,6 @@ def _extract_tensor_types(cfg: dict, model_id: str) -> str:
     if parts:
         return ", ".join(parts)
     return precision_from_name(model_id)
-
-
-async def _fetch_model_meta(client: httpx.AsyncClient, model_id: str) -> Optional[dict]:
-    """从 ModelScope 页面和 API 获取参数量和 StorageSize。"""
-    try:
-        result: dict = {}
-
-        # 1. API 获取 StorageSize
-        api_url = f"{MS_BASE}/models/{model_id}"
-        api_resp = await client.get(api_url)
-        if api_resp.status_code == 200:
-            data = api_resp.json()
-            if isinstance(data, dict):
-                d = data.get("Data") or data
-                if isinstance(d, dict):
-                    storage = d.get("StorageSize") or d.get("storageSize")
-                    if isinstance(storage, (int, float)) and storage > 0:
-                        result["weight_gb"] = round(storage / 1e9, 2)
-
-        # 2. HTML 页面提取参数量 (API 无此字段)
-        page_url = f"https://modelscope.cn/models/{model_id}"
-        html_headers = {**_HEADERS, "Accept": "text/html,application/xhtml+xml"}
-        page_resp = await client.get(page_url, headers=html_headers)
-        if page_resp.status_code == 200:
-            html = page_resp.text
-            # 匹配页面中的参数量显示: 80B / 80.0B / 7.2B 等
-            import re
-            m = re.search(r'(\d+(?:\.\d+)?)\s*[bB]', html)
-            if m:
-                try:
-                    result["params"] = float(m.group(1))
-                except ValueError:
-                    pass
-
-        return result if result else None
-    except Exception:
-        pass
-    return None
 
 
 # 计入权重大小的文件后缀
