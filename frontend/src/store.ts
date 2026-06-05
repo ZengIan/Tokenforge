@@ -39,7 +39,6 @@ export const DEFAULT_INFERENCE: InferenceConfig = {
   tp_size: 1,
   pp_size: 1,
   dp_size: 1,
-  async_scheduling: false,
 };
 
 interface State {
