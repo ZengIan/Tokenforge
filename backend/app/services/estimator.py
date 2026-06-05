@@ -180,7 +180,14 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     # --- KV cache: 先算理论需求, 再按实际显存预算截断 ---
     kv_b = _kv_bytes(inf)
 
-    if model.sliding_window and model.num_full_attention_layers > 0:
+    if model.attn_type == "MLA" and model.mla_kv_dim > 0:
+        # MLA(DeepSeek/GLM-MLA): 每层每 token 只缓存 1 个低秩 latent(kv_lora_rank+rope),
+        # 与注意力头数解耦, 不 ×2(V 由 latent 还原), 比 MHA 小 10~100 倍。
+        kv_per_seq = (
+            model.num_layers * model.mla_kv_dim * seq * kv_b / KV_UTIL
+        )
+        kv_theory = kv_per_seq * active_seqs
+    elif model.sliding_window and model.num_full_attention_layers > 0:
         # 混合注意力 (如 Gemma4): sliding 层只缓存 window 内 token, full 层缓存完整 seq
         n_full = model.num_full_attention_layers
         n_slide = model.num_layers - n_full

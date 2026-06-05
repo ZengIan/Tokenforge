@@ -227,25 +227,53 @@ export function ModelPanel() {
           value={model.num_key_value_heads ?? 0}
           onChange={(v) => setModel({ num_key_value_heads: v })}
         />
+        <label className="block">
+          <span className="label">注意力类型 (KV 关键)</span>
+          <select
+            className="input"
+            value={model.attn_type || ""}
+            onChange={(e) => setModel({ attn_type: e.target.value } as any)}
+          >
+            <option value="">自动识别</option>
+            <option value="MHA">MHA（全头KV）</option>
+            <option value="GQA">GQA（分组）</option>
+            <option value="MQA">MQA（单KV头）</option>
+            <option value="MLA">MLA（DeepSeek/GLM 低秩）</option>
+          </select>
+        </label>
+        {model.attn_type === "MLA" ? (
+          <NumField
+            label="MLA latent 维度"
+            value={model.mla_kv_dim ?? 576}
+            onChange={(v) => setModel({ mla_kv_dim: v })}
+          />
+        ) : (
+          <div />
+        )}
         <TextField label="默认模型精度" value={model.precision} onChange={(v) => setModel({ precision: v })} />
         <TextField label="张量类型" value={model.tensor_types ?? ""} onChange={(v) => setModel({ tensor_types: v } as any)} />
       </div>
 
-      {(model.is_moe || model.is_linear_attn) && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+      {(model.is_moe || model.attn_type || model.is_linear_attn) && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {model.is_moe && (
             <span className="chip border-violet-600/60 text-violet-300">
-              MoE · 激活 {model.active_params_b ?? "?"}B / 共 {model.params_b}B
+              MoE · 激活 {model.active_params_b ?? "?"}B / 共 {model.params_b}B（只读激活权重）
             </span>
+          )}
+          {model.attn_type === "MLA" && (
+            <span className="chip border-emerald-600/60 text-emerald-300">
+              MLA · 低秩 KV(latent {model.mla_kv_dim ?? 576}) · 比 MHA 小 10~100×
+            </span>
+          )}
+          {model.attn_type && model.attn_type !== "MLA" && (
+            <span className="chip border-slate-500/60 text-slate-300">{model.attn_type} 注意力</span>
           )}
           {model.is_linear_attn && (
             <span className="chip border-sky-600/60 text-sky-300">
               线性/混合注意力 · KV×{model.kv_cache_factor ?? 1}
             </span>
           )}
-          <span className="text-[11px] leading-5 text-slate-400">
-            已据此修正吞吐(MoE 只读激活权重 · 线性注意力 KV 极小)
-          </span>
         </div>
       )}
       <p className="mt-2 text-[11px] text-slate-300">
