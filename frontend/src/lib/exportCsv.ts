@@ -88,7 +88,7 @@ export function buildRecord(
 /** 测算依据(公式说明),覆盖表格每个指标 + 补充项;附在 CSV 末尾 */
 const BASIS: [string, string][] = [
   ["权重大小(GB)", "运行时权重显存 = 参数量 × 每参数字节数(量化决定:BF16=2 / FP8·W8=1 / 4bit=0.5) × 组量化开销。MoE 所有专家常驻显存,按总参数算。"],
-  ["KV cache(GB)", "= 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9(分页)。KV维度=KV头数×head_dim(GQA);线性/混合注意力按 kv_cache_factor 缩减(KV 极小)。显示为满并发满上下文的真实需求。"],
+  ["KV cache(GB)", "= 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9(分页)。KV维度=KV头数×head_dim(GQA/MLA/MHA/MQA);线性/混合注意力按 kv_cache_factor 缩减(KV 极小)。显示为满并发满上下文的真实需求。"],
   ["激活值(GB)", "≈ max-num-batched-tokens × hidden_size × 精度字节 × 2(峰值中间张量经验系数)。"],
   ["框架开销(GB)", "≈ 每卡约 1.2GB(CUDA 上下文/算子 workspace/通信缓冲) × 卡数;开启 enforce-eager 每卡省约 0.6GB。"],
   ["总显存开销(GB)", "= 权重 + KV cache + 激活值 + 框架开销(真实需求)。若 > 卡数×单卡显存×gpu-memory-utilization,则放不下全部并发,vLLM 自动降并发(见可容纳并发数)。"],

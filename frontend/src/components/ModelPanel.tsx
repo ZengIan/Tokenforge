@@ -219,11 +219,21 @@ export function ModelPanel() {
       <div className="mt-3 grid grid-cols-2 gap-2">
         <NumField label="参数量 (B)" value={model.params_b} onChange={(v) => setModel({ params_b: v })} />
         <NumField label="权重大小 (GB)" value={model.weight_size_gb ?? 0} onChange={(v) => setModel({ weight_size_gb: v })} />
-        <NumField label="层数" value={model.num_layers} onChange={(v) => setModel({ num_layers: v })} />
-        <NumField label="隐藏层" value={model.hidden_size} onChange={(v) => setModel({ hidden_size: v })} />
-        <NumField label="注意力头数" value={model.num_attention_heads} onChange={(v) => setModel({ num_attention_heads: v })} />
         <NumField
-          label="KV 头数 (GQA)"
+          label="层数"
+          tip={`Transformer 的层数。每层 = 自注意力 + FFN。\n层数越多 → 理解力越强，但推理延迟和显存线性增长。\n影响 KV Cache 总大小：需 × 层数。`}
+          value={model.num_layers} onChange={(v) => setModel({ num_layers: v })} />
+        <NumField
+          label="隐藏层"
+          tip={`每层的向量维度，决定模型的"宽度"。\n维度越大 → 表达能力越强，但 KV Cache / 激活显存平方级增长。\n需被注意力头数整除（每头维度 = hidden_size ÷ 头数）。`}
+          value={model.hidden_size} onChange={(v) => setModel({ hidden_size: v })} />
+        <NumField
+          label="注意力头数"
+          tip={`把每层的注意力计算拆成多少个头并排算。\n头数越多特征越丰富，每头维度 = hidden_size ÷ 头数。\n必须整除 hidden_size，且 ≥ KV 头数。`}
+          value={model.num_attention_heads} onChange={(v) => setModel({ num_attention_heads: v })} />
+        <NumField
+          label="KV 头数 (GQA/MLA/MHA/MQA)"
+          tip={`背景：注意力 = 拿着问题(Q)翻关键词(K)找答案(V)。\nK 和 V 要存起来复用 → 这就是 KV Cache。\n长上下文时 KV Cache 显存会爆炸（200K 可能占几百 GB）。\n解决办法——少存点 K 和 V：\n\nMHA（标准）：每个提问角度都存一套自己的 K/V，显存吃满。\n例：Llama 3-8B（32 个 Q 头 + 32 套 KV）\n\nGQA（分组共享）：几个 Q 头共用一套 KV，省显存。\n例：Llama 3-70B（64Q 仅 8KV → 显存压到 1/8）\n\nMQA（极致省）：所有提问角度共享 1 套 K/V，精打细算。\n例：Gemma、Falcon\n\nMLA（压扁了存）：不用存完整 KV，把 KV 压成极小的低秩表示再还原。\n例：DeepSeek V2/V3/R1，KV 可压缩至几十分之一\n  使用方法：KV 头数设为 1，勾选下方"线性/混合注意力"，\n  填写 kv_cache_factor 压缩比`}
           value={model.num_key_value_heads ?? 0}
           onChange={(v) => setModel({ num_key_value_heads: v })}
         />
@@ -268,7 +278,7 @@ export function ModelPanel() {
   );
 }
 
-function NumField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+function NumField({ label, value, onChange, tip }: { label: string; value: number; onChange: (v: number) => void; tip?: string }) {
   const [local, setLocal] = useState(String(value));
   useEffect(() => { setLocal(String(value)); }, [value]);
 
@@ -280,7 +290,19 @@ function NumField({ label, value, onChange }: { label: string; value: number; on
 
   return (
     <div>
-      <span className="label">{label}</span>
+      <span className="label flex items-center gap-1">
+        {label}
+        {tip && (
+          <span className="group relative inline-flex align-middle">
+            <span className="flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full border border-slate-500 text-[9px] leading-none text-slate-400 group-hover:border-forge-ember group-hover:text-forge-ember">
+              ?
+            </span>
+            <span className="pointer-events-none absolute bottom-full right-0 z-50 mb-1 whitespace-pre-wrap rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-[11px] leading-relaxed text-slate-200 opacity-0 shadow-xl transition-opacity group-hover:opacity-100" style={{ minWidth: "360px", maxWidth: "480px" }}>
+              {tip}
+            </span>
+          </span>
+        )}
+      </span>
       <input
         type="text"
         inputMode="decimal"

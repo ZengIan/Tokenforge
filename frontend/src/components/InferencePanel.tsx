@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../store";
-import type { DType, InterNode, IntraNode, KVCacheDType, Quantization } from "../types";
+import type { DType, InterNode, KVCacheDType, Quantization } from "../types";
 
 const DTYPES: DType[] = ["auto", "float16", "bfloat16", "float32"];
 const QUANTIZATIONS: Quantization[] = [
@@ -92,7 +92,7 @@ export function InferencePanel() {
         label="输入长度 (Prompt)"
         flag="仅影响 TTFT"
         tip={
-          "你的问题/上下文有多少个字(token)——只用来估算首字延迟(TTFT)。\n\n" +
+          "--max-num-prompt-tokens 你的问题/上下文有多少个字(token)——只用来估算首字延迟(TTFT)。\n\n" +
           "为什么单独给：TTFT 几乎完全取决于 prompt 长度。\n" +
           "• 短输入(几百~2K，普通对话)：多卡下 TTFT 就是几十~几百毫秒(正常)。\n" +
           "• 长输入(4K~32K+，RAG/长文档/多轮历史)：TTFT 会到 0.5~3 秒甚至更久。\n" +
@@ -182,39 +182,6 @@ export function InferencePanel() {
         </div>
       </div>
 
-      {/* 互联拓扑 (单机多卡时) */}
-      {nGpu > 1 && (
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <Select
-            label="机内互联"
-            flag="单机卡间"
-            tip={
-              "单机内多张卡之间怎么连，影响张量并行(TP)的 all-reduce 通信效率。\n\n" +
-              "• 自动：按卡库判断（数据中心卡 / 国产 HCCS·xGMI 卡 = 高速；消费 PCIe 卡 = 无高速）。\n" +
-              "• 高速 NVLink/HCCS：卡间有高速直连，TP 通信几乎无损。\n" +
-              "• 纯 PCIe：只走 PCIe，无高速直连，TP 通信开销约 -15%。\n\n" +
-              "国产卡（昇腾/PPU/DCU）若有 HCCS/xGMI 链路拓扑，选'高速'或保持'自动'即可，不会再被误降。"
-            }
-            value={i.intra_node}
-            options={["auto", "highspeed", "pcie"]}
-            optionLabels={{ auto: "自动（按卡库）", highspeed: "高速 NVLink/HCCS", pcie: "纯 PCIe（无高速）" }}
-            onChange={(v) => setInference({ intra_node: v as IntraNode })}
-          />
-          <NumberField
-            label="单机卡数"
-            flag="每机 GPU 数"
-            tip={
-              "一台物理服务器里的 GPU 数量（常见 8）。超过这个数就按多机部署计算跨机通信损耗。\n\n" +
-              "如果你的整机就是 16 卡（如 PPU 单机 16 卡 96G），把这里改成 16，就不会被误判成多机。"
-            }
-            value={i.gpus_per_node}
-            min={1}
-            max={64}
-            onChange={(v) => setInference({ gpus_per_node: v })}
-          />
-        </div>
-      )}
-
       {/* 跨机互联 (真多机时) */}
       {nGpu > i.gpus_per_node && (
         <div className="mt-2">
@@ -246,9 +213,9 @@ export function InferencePanel() {
           flag="--*-parallel-size"
           tip={
             "是否手动指定并行切分。不勾选时默认按总卡数做张量并行（TP=卡数，PP=DP=1）。\n\n" +
-            "• TP 张量并行：把每一层横切到多卡并行算，降单卡显存与单请求延迟。\n" +
-            "• PP 流水线并行：把不同层分到不同卡(流水线)，省卡间带宽、适合跨机，但有流水 bubble。\n" +
-            "• DP 数据并行：整套模型复制多份各服务不同请求，提升总吞吐(每份都占一份权重显存)。\n\n" +
+            "• --tensor-parallel-size TP张量并行：把每一层横切到多卡并行算，降单卡显存与单请求延迟。\n" +
+            "• --pipeline-parallel-size PP流水线并行：把不同层分到不同卡(流水线)，省卡间带宽、适合跨机，但有流水 bubble。\n" +
+            "• --data-parallel-size DP数据并行：整套模型复制多份各服务不同请求，提升总吞吐(每份都占一份权重显存)。\n\n" +
             "⚠ 三者乘积必须 = 总卡数；TP 必须整除注意力头数；PP 必须整除层数，否则模型直接起不来。"
           }
           checked={i.parallel_enabled}
@@ -262,9 +229,9 @@ export function InferencePanel() {
         />
         {i.parallel_enabled && (
           <div className="mt-1 grid grid-cols-3 gap-2">
-            <NumberField
+            <ParField
               label="张量并行 TP"
-              flag="--tensor-parallel-size"
+              flag="TP"
               tip={
                 "把模型每一层横切到 TP 张卡上并行算。\n• 降单卡权重/激活显存、降单请求延迟。\n• 需 TP 整除注意力头数(及 KV 头数)。\n• TP 越大卡间 all-reduce 越多，建议不超过单机卡数。"
               }
@@ -273,9 +240,9 @@ export function InferencePanel() {
               max={1024}
               onChange={(v) => setInference({ tp_size: v })}
             />
-            <NumberField
+            <ParField
               label="流水线 PP"
-              flag="--pipeline-parallel-size"
+              flag="PP"
               tip={
                 "把模型按层数纵向切成 PP 段分到不同卡(流水线)。\n• 卡间只传激活、省带宽，适合跨机。\n• 需 PP 整除层数；有流水线 bubble，单请求延迟略增。\n• 与 --max-num-batched-tokens 相关：批太小流水线填不满、吞吐下降。"
               }
@@ -284,9 +251,9 @@ export function InferencePanel() {
               max={256}
               onChange={(v) => setInference({ pp_size: v })}
             />
-            <NumberField
+            <ParField
               label="数据并行 DP"
-              flag="--data-parallel-size"
+              flag="DP"
               tip={
                 "整套模型复制 DP 份，各自服务不同请求。\n• 总吞吐近似 ×DP，卡间几乎无通信。\n• 每份都要完整放下权重→单卡权重显存不随 DP 降低。\n• 适合显存放得下、想堆吞吐的场景。"
               }
@@ -309,7 +276,7 @@ function Tip({ text }: { text: string }) {
       <span className="flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full border border-slate-500 text-[9px] leading-none text-slate-400 group-hover:border-forge-ember group-hover:text-forge-ember">
         ?
       </span>
-      <span className="pointer-events-none absolute right-0 top-5 z-30 hidden w-80 whitespace-pre-line rounded-md border border-slate-600 bg-slate-900 p-3 text-[11px] font-normal leading-relaxed text-slate-200 shadow-xl group-hover:block">
+      <span className="pointer-events-none absolute bottom-full right-0 z-30 mb-1 hidden w-80 whitespace-pre-line rounded-md border border-slate-600 bg-slate-900 p-3 text-[11px] font-normal leading-relaxed text-slate-200 shadow-xl group-hover:block">
         {text}
       </span>
     </span>
@@ -328,11 +295,44 @@ function LabelRow({ label, flag, tip }: { label: string; flag: string; tip: stri
   return (
     <span className="label mb-0 flex items-center">
       {label}
-      <code className="ml-1.5 rounded bg-slate-900/70 px-1 text-[10px] text-slate-400">
+      <code className="ml-1.5 shrink-0 rounded bg-slate-900/70 px-1 text-[10px] text-slate-400">
         {flag}
       </code>
       <Tip text={tip} />
     </span>
+  );
+}
+
+/** 并行配置专用：标签在上，输入框在下 */
+function ParField({
+  label, flag, tip, value, min, max, onChange,
+}: {
+  label: string; flag: string; tip: string;
+  value: number; min: number; max: number;
+  onChange: (v: number) => void;
+}) {
+  const [local, setLocal] = useState(String(value));
+  useEffect(() => { setLocal(String(value)); }, [value]);
+
+  function commit() {
+    const n = Number(local);
+    if (!isNaN(n)) onChange(clamp(n, min, max));
+    else setLocal(String(value));
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <LabelRow label={label} flag={flag} tip={tip} />
+      <input
+        type="text"
+        inputMode="numeric"
+        className="input w-full cursor-text"
+        value={local}
+        onChange={(e) => setLocal(e.target.value.replace(/\D/g, ""))}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+      />
+    </div>
   );
 }
 
