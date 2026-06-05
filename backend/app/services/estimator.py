@@ -182,7 +182,14 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     # --- KV cache: 先算理论需求, 再按实际显存预算截断 ---
     kv_b = _kv_bytes(inf)
 
-    if model.sliding_window and model.num_full_attention_layers > 0:
+    if model.attn_type == "MLA" and model.mla_kv_dim > 0:
+        # MLA(DeepSeek/GLM-MLA): 每层每 token 只缓存 1 个低秩 latent(kv_lora_rank+rope),
+        # 与注意力头数解耦, 不 ×2(V 由 latent 还原), 比 MHA 小 10~100 倍。
+        kv_per_seq = (
+            model.num_layers * model.mla_kv_dim * seq * kv_b / KV_UTIL
+        )
+        kv_theory = kv_per_seq * active_seqs
+    elif model.sliding_window and model.num_full_attention_layers > 0:
         # 混合注意力 (如 Gemma4): sliding 层只缓存 window 内 token, full 层缓存完整 seq
         n_full = model.num_full_attention_layers
         n_slide = model.num_layers - n_full
@@ -327,6 +334,8 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
             )
 
     batch = inf.max_num_seqs  # continuous batching: in-flight sequences
+    # 实际同时在跑的路数: 受 KV 显存限制(放不下的请求会排队, 不计入瞬时吞吐)
+    eff_batch = min(batch, max(1, mem.max_kv_seqs))
 
     # MoE: decode/prefill 只用激活参数(全部专家常驻显存, 但每 token 只读 top-k)
     active_params = (model.active_params_b or model.params_b) * 1e9
@@ -343,10 +352,10 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     # 每路 KV 读取量按"实际序列长度"(≈输入长度)缩放; mem.kv_cache_gb 是 max-model-len 满算口径
     in_len = min(inf.input_len, inf.max_model_len)
     kv_per_seq = (mem.kv_cache_gb * GB / max(1, batch)) * (in_len / max(1, inf.max_model_len))
-    # 单请求: 权重 + 自己 1 路 KV; 总吞吐: 权重(共享) + 全 batch 的 KV
+    # 单请求: 权重 + 自己 1 路 KV; 总吞吐: 权重(共享) + 实际在跑的 eff_batch 路 KV
     tpot_bw_single = (weight_read_bytes + kv_per_seq) / (bw_replica * mem_util)
-    tpot_bw_total = (weight_read_bytes + kv_per_seq * batch) / (bw_total * mem_util)
-    decode_compute_t = (2 * active_params * batch) / (flops_total * compute_util)
+    tpot_bw_total = (weight_read_bytes + kv_per_seq * eff_batch) / (bw_total * mem_util)
+    decode_compute_t = (2 * active_params * eff_batch) / (flops_total * compute_util)
 
     # ---------------- 每 token 固定开销(现实地板) ----------------
     arch_mult = 1.0
@@ -365,7 +374,7 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     ) / 1000.0
 
     # 单请求 TPOT(副本带宽) 与 总吞吐 TPOT(聚合带宽)
-    tpot_single = max(tpot_bw_single, decode_compute_t / max(1, batch)) + overhead_s
+    tpot_single = max(tpot_bw_single, decode_compute_t / max(1, eff_batch)) + overhead_s
     tpot_total = max(tpot_bw_total, decode_compute_t) + overhead_s
 
     # ---------------- PREFILL → TTFT (瞬时 + 平均) ----------------
@@ -421,9 +430,9 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     single_tps = _safe(tpot_single)
     single_tps_high = _safe(tpot_bw_single + overhead_s * OVERHEAD_FAST)
     single_tps_low = _safe(tpot_bw_single + overhead_s * OVERHEAD_SLOW)
-    tps = batch * _safe(tpot_total)
-    tps_high = batch * _safe(tpot_bw_total + overhead_s * OVERHEAD_FAST)
-    tps_low = batch * _safe(tpot_bw_total + overhead_s * OVERHEAD_SLOW)
+    tps = eff_batch * _safe(tpot_total)
+    tps_high = eff_batch * _safe(tpot_bw_total + overhead_s * OVERHEAD_FAST)
+    tps_low = eff_batch * _safe(tpot_bw_total + overhead_s * OVERHEAD_SLOW)
     tpot_eff = tpot_single
     request_latency = ttft + tpot_single  # 首字 + 单 token
     # 供瓶颈分析判断带宽 vs 算力

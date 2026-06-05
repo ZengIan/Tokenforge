@@ -84,6 +84,25 @@ def test_enforce_eager_lowers_single_tps():
     assert on.single_tps < off.single_tps
 
 
+def test_mla_kv_far_smaller_than_mha():
+    """MLA(低秩 latent KV) 应远小于把同模型当 MHA 算的 KV。"""
+    g = GPUS["NVIDIA H100 SXM (80G)"]
+    base = dict(
+        params_b=210, hidden_size=6144, num_layers=78,
+        num_attention_heads=64, num_key_value_heads=64, vocab_size=152064,
+    )
+    inf = dict(max_model_len=131072, max_num_seqs=8)
+    mha = estimate(EstimateRequest(
+        model=ModelSpec(**base, attn_type="MHA"),
+        gpus=[GpuGroup(spec=g, count=8)], inference=InferenceConfig(**inf)))
+    mla = estimate(EstimateRequest(
+        model=ModelSpec(**base, attn_type="MLA", mla_kv_dim=576),
+        gpus=[GpuGroup(spec=g, count=8)], inference=InferenceConfig(**inf)))
+    # MLA KV 应至少小 10 倍, 且可容纳并发更多
+    assert mla.memory.kv_cache_gb < mha.memory.kv_cache_gb / 10
+    assert mla.max_fit_seqs > mha.max_fit_seqs
+
+
 def test_max_fit_seqs_reported():
     # 庞大并发应触发 max_fit_seqs < max_num_seqs
     r = estimate(_req("NVIDIA A100 SXM (80G)", 8, max_num_seqs=2048, max_model_len=131072))

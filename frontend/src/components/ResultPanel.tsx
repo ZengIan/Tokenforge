@@ -77,10 +77,10 @@ function MetricCards({ r }: { r: EstimateResponse }) {
       value: range(r.tps_low, r.tps_high),
       unit: "tokens/s",
       tip:
-        "保守区间(非理论上限) = 并发数 × 单请求 TPS。\n" +
-        "单 token 耗时 = 权重读取(带宽)时间 + 每 token 固定开销。\n" +
-        "区间反映 kernel/通信开销的不确定性，已按实测标定。\n" +
-        "并发越大总吞吐越高(直到触及算力/带宽上限)。",
+        "保守区间(非理论上限) = 实际并发 × 单请求 TPS。\n" +
+        "★ 实际并发 = min(期望并发, 可容纳并发)——KV 放不下的请求会排队，\n" +
+        "  不计入瞬时吞吐(vLLM 是排队，不是降低单请求 TPS)。\n" +
+        "并发越大总吞吐越高(直到触及显存/算力/带宽上限)。",
     },
     {
       label: "单请求 TPS",

@@ -30,6 +30,8 @@ export interface ModelSpec {
   is_moe?: boolean;
   is_linear_attn?: boolean;
   kv_cache_factor?: number;
+  attn_type?: string;
+  mla_kv_dim?: number;
 }
 
 export interface GpuGroup {

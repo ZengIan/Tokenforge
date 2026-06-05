@@ -49,6 +49,12 @@ class ModelSpec(BaseModel):
     weight_size_gb: Optional[float] = None
     # 参数量是否从 ModelScope API 准确获取
     params_accurate: bool = False
+    # --- 注意力类型 (对 KV cache 影响极大) ---
+    # MHA = 全头KV; GQA = 分组(KV头<注意力头); MQA = 单KV头; MLA = 低秩潜在(DeepSeek/GLM-MLA)
+    attn_type: str = ""  # "MHA"/"GQA"/"MQA"/"MLA"; 空=按 KV/注意力头数推断
+    # MLA latent KV 维度 = kv_lora_rank + qk_rope_head_dim (如 GLM/DeepSeek 512+64=576)
+    # >0 时按 MLA 公式算 KV(每层每 token 只存 1 个 latent, 与头数解耦, 远小于 MHA)
+    mla_kv_dim: int = 0
     # --- 混合注意力 (如 Gemma4) ---
     sliding_window: Optional[int] = None  # sliding attention 窗口大小
     num_full_attention_layers: int = 0  # full_attention 层数;0 表示全是 full/sliding 统一处理
