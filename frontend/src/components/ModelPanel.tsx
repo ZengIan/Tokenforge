@@ -142,6 +142,7 @@ export function ModelPanel() {
     <div className="card">
       <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-forge-flame">
         ① 模型选择
+        <span className="text-[11px] font-normal text-slate-400">（参数由 ModelScope 自动获取，如有误差，请手动修改）</span>
       </h2>
 
       <div className="relative">
@@ -236,6 +237,8 @@ export function ModelPanel() {
           value={model.num_key_value_heads ?? 0}
           onChange={(v) => setModel({ num_key_value_heads: v })}
         />
+        <TextField label="默认模型精度" value={model.precision} onChange={(v) => setModel({ precision: v })} />
+        <TextField label="张量类型" value={model.tensor_types ?? ""} onChange={(v) => setModel({ tensor_types: v } as any)} />
         <label className="block">
           <span className="label">注意力类型 (KV 关键)</span>
           <select
@@ -259,8 +262,6 @@ export function ModelPanel() {
         ) : (
           <div />
         )}
-        <TextField label="默认模型精度" value={model.precision} onChange={(v) => setModel({ precision: v })} />
-        <TextField label="张量类型" value={model.tensor_types ?? ""} onChange={(v) => setModel({ tensor_types: v } as any)} />
       </div>
 
       {(model.is_moe || model.attn_type || model.is_linear_attn) && (
@@ -285,22 +286,6 @@ export function ModelPanel() {
           )}
         </div>
       )}
-      <p className="mt-2 text-[11px] text-slate-300">
-        以上参数由 ModelScope 自动获取
-        {(!model.tensor_types || model.tensor_types === "") && (
-          <>，张量类型无法获取，请到{" "}
-            <a
-              href={`https://modelscope.cn/models/${model.model_id}`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-forge-ember underline hover:text-forge-flame"
-            >
-              ModelScope
-            </a>
-            {" "}确认
-          </>
-        )}。
-      </p>
     </div>
   );
 }

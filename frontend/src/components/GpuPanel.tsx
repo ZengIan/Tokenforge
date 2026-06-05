@@ -129,14 +129,7 @@ export function GpuPanel() {
             </span>
           )}
         </div>
-        {group.spec.note && (
-          <p className="mt-1 text-[11px] leading-snug text-slate-300">{group.spec.note}</p>
-        )}
       </div>
-      <p className="mt-2 text-[11px] text-slate-300">
-        张量并行 (TP) 部署，单一卡型 × 数量。
-        {nGpu > 1 && " 右侧「?」提示查看互联影响。"}
-      </p>
     </div>
   );
 }

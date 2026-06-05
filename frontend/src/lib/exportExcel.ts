@@ -60,7 +60,7 @@ const n2 = (v: number) => Math.round(v * 100) / 100;
 /* ================= 性能估算 18 列 (名称/列宽完全对齐模板) ================= */
 const COLS: { h: string; w: number }[] = [
   { h: "算力卡类型", w: 18.1 },
-  { h: "模型", w: 24.0 },
+  { h: "模型名称", w: 24.0 },
   { h: "权重大小(GB)", w: 14.5 },
   { h: "参数量(B)", w: 13.4 },
   { h: "量化类型", w: 14.1 },
@@ -74,9 +74,9 @@ const COLS: { h: string; w: number }[] = [
   { h: "可容纳\n并发数(个)", w: 13.0 },
   { h: "单用户 TPS\n(tokens/s)", w: 15.0 },
   { h: "首字延迟\nTTFT(ms)", w: 13.0 },
-  { h: "TPOT 每字延迟(ms)", w: 16.0 },
+  { h: "每字延迟\nTPOT (ms)", w: 16.0 },
   { h: "体感评级", w: 13.0 },
-  { h: "说明", w: 30.0 },
+  { h: "推理参数", w: 35.0 },
 ];
 const N = COLS.length; // 18
 const TITLE = "模型推理性能矩阵 · 按上下文长度递增、并发递减";
@@ -94,10 +94,29 @@ export function buildRecord(
   const hi = Math.round(r.single_tps_high);
   const rating = ratingOf(r.single_tps_low, r.ttft_ms);
 
+  // 动态生成推理参数说明（对应 ③ 推理参数面板的所有 vLLM 启动参数）
+  const infArgs: string[] = [
+    `--max-model-len ${inf.max_model_len}`,
+    `--max-num-seqs ${inf.max_num_seqs}`,
+    `--max-num-batched-tokens ${inf.max_num_batched_tokens}`,
+    `--max-num-prompt-tokens ${inf.input_len}`,
+    `--gpu-memory-utilization ${inf.gpu_memory_utilization}`,
+    `--dtype ${inf.dtype}`,
+    `--quantization ${inf.quantization}`,
+    `--kv-cache-dtype ${inf.kv_cache_dtype}`,
+  ];
+  if (inf.enforce_eager) infArgs.push("--enforce-eager");
+  if (inf.async_scheduling) infArgs.push("--async-scheduling");
+  if (inf.parallel_enabled) {
+    infArgs.push(`--tensor-parallel-size ${inf.tp_size}`);
+    infArgs.push(`--pipeline-parallel-size ${inf.pp_size}`);
+    infArgs.push(`--data-parallel-size ${inf.dp_size}`);
+  }
+
   const cells: (string | number)[] = [
     card,
     model.model_id,
-    n2(r.memory.weights_gb),
+    model.weight_size_gb!,
     model.params_b,
     inf.quantization,
     nGpu,
@@ -112,7 +131,7 @@ export function buildRecord(
     Math.round(r.ttft_ms),
     n2(r.tpot_ms),
     rating.label,
-    rating.desc,
+    infArgs.map((a) => `  ${a}`).join("\n"),
   ];
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -122,7 +141,7 @@ export function buildRecord(
 }
 
 /* ================= 测算依据数据 ================= */
-const JISUAN_HEADER = ["指标", "说明", "示例： Ascend 910C (128G) × 4 卡，DeepSeek-V4-Flash-w8a8-mtp (300.1B 参数，w8a8 量化)\n上下文：200K，期望并发：8"];
+const JISUAN_HEADER = ["指标", "说明", "示例： Ascend 910C (128G) × 4 卡，DeepSeek-V4-Flash-w8a8-mtp (300.1B 参数，w8a8 量化)上下文：200K，期望并发：8"];
 const JISUAN_ROWS: [string, string, string][] = [
   ["权重大小", "运行时权重显存 = 参数量(B) × 每参数字节 × 组量化开销\n每参数字节：\n• BF16/FP16 = 2 字节  • FP8/W8A8 = 1 字节\n• AWQ/GPTQ(4bit) = 0.5 字节\nMoE 模型：所有专家常驻显存，按总参数量计算", "300.1B × 1 字节 (w8a8) = 300.1 GB ≈ 300 GB"],
   ["KV Cache", "总占用 = 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9（分页效率）\nKV维度 = KV头数 × head_dim（GQA架构）\n• 线性/混合注意力：按 kv_cache_factor 缩减（如 DeepSeek MLA 可压缩至 1/4）\n• 显示值为满并发、满上下文的真实需求", "KV 维度 = 1 (GQA头) × 512 (head_dim) = 512\n标准公式：2 × 43层 × 512 × 204800 × 8 × 1字节 ÷ 0.9\n         ≈ 783 GB  (若按标准 MHA)\nMLA 压缩系数约 0.205 ≈ 160.32 GB"],
