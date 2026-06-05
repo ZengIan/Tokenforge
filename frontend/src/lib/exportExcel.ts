@@ -57,10 +57,45 @@ function ratingOf(tps: number, ttftMs: number): Rating {
 
 const n2 = (v: number) => Math.round(v * 100) / 100;
 
+/** 生成推理参数描述字符串，格式对齐 vLLM 启动参数 */
+function buildInferenceParams(
+  gpuGroups: GpuGroup[],
+  inf: InferenceConfig,
+): string {
+  const nGpu = gpuGroups.reduce((s, g) => s + g.count, 0);
+  const lines: string[] = [];
+  lines.push(`  --max-model-len ${inf.max_model_len}`);
+  lines.push(`  --max-num-seqs ${inf.max_num_seqs}`);
+  lines.push(`  --max-num-batched-tokens ${inf.max_num_batched_tokens}`);
+  lines.push(`  --gpu-memory-utilization ${inf.gpu_memory_utilization}`);
+  lines.push(`  --dtype ${inf.dtype}`);
+  if (inf.quantization !== "none") {
+    lines.push(`  --quantization ${inf.quantization}`);
+  }
+  if (inf.kv_cache_dtype !== "auto") {
+    lines.push(`  --kv-cache-dtype ${inf.kv_cache_dtype}`);
+  }
+  if (inf.enforce_eager) {
+    lines.push("  --enforce-eager");
+  }
+  if (inf.async_scheduling) {
+    lines.push("  --async-scheduling");
+  }
+  // 并行配置
+  if (inf.parallel_enabled) {
+    if (inf.tp_size > 1) lines.push(`  --tensor-parallel-size ${inf.tp_size}`);
+    if (inf.pp_size > 1) lines.push(`  --pipeline-parallel-size ${inf.pp_size}`);
+    if (inf.dp_size > 1) lines.push(`  --data-parallel-size ${inf.dp_size}`);
+  } else {
+    lines.push(`  --tensor-parallel-size ${nGpu}`);
+  }
+  return lines.join("\n");
+}
+
 /* ================= 性能估算 18 列 (名称/列宽完全对齐模板) ================= */
 const COLS: { h: string; w: number }[] = [
   { h: "算力卡类型", w: 18.1 },
-  { h: "模型", w: 24.0 },
+  { h: "模型名称", w: 24.0 },
   { h: "权重大小(GB)", w: 14.5 },
   { h: "参数量(B)", w: 13.4 },
   { h: "量化类型", w: 14.1 },
@@ -73,10 +108,10 @@ const COLS: { h: string; w: number }[] = [
   { h: "总显存开销(GB)\n(权重+激活+KV+框架)", w: 22.0 },
   { h: "可容纳\n并发数(个)", w: 13.0 },
   { h: "单用户 TPS\n(tokens/s)", w: 15.0 },
-  { h: "首字延迟\nTTFT(ms)", w: 13.0 },
-  { h: "TPOT 每字延迟(ms)", w: 16.0 },
+  { h: "Mean TTFT\n平均首字(ms)", w: 15.0 },
+  { h: "Mean TPOT\n平均每字(ms)", w: 15.0 },
   { h: "体感评级", w: 13.0 },
-  { h: "说明", w: 30.0 },
+  { h: "推理参数", w: 32.0 },
 ];
 const N = COLS.length; // 18
 const TITLE = "模型推理性能矩阵 · 按上下文长度递增、并发递减";
@@ -92,12 +127,12 @@ export function buildRecord(
   const ctxK = Math.round(inf.max_model_len / 1024);
   const lo = Math.round(r.single_tps_low);
   const hi = Math.round(r.single_tps_high);
-  const rating = ratingOf(r.single_tps_low, r.ttft_ms);
+  const rating = ratingOf(r.single_tps, r.mean_ttft_ms);
 
   const cells: (string | number)[] = [
     card,
     model.model_id,
-    n2(r.memory.weights_gb),
+    model.weight_size_gb ?? n2(r.memory.weights_gb),
     model.params_b,
     inf.quantization,
     nGpu,
@@ -109,10 +144,10 @@ export function buildRecord(
     n2(r.memory.total_gb),
     r.max_fit_seqs,
     lo === hi ? `${lo}` : `${lo}-${hi}`,
-    Math.round(r.ttft_ms),
-    n2(r.tpot_ms),
+    Math.round(r.mean_ttft_ms),
+    n2(r.mean_tpot_ms),
     rating.label,
-    rating.desc,
+    buildInferenceParams(gpuGroups, inf),
   ];
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -124,19 +159,19 @@ export function buildRecord(
 /* ================= 测算依据数据 ================= */
 const JISUAN_HEADER = ["指标", "说明", "示例： Ascend 910C (128G) × 4 卡，DeepSeek-V4-Flash-w8a8-mtp (300.1B 参数，w8a8 量化)\n上下文：200K，期望并发：8"];
 const JISUAN_ROWS: [string, string, string][] = [
-  ["权重大小", "运行时权重显存 = 参数量(B) × 每参数字节 × 组量化开销\n每参数字节：\n• BF16/FP16 = 2 字节  • FP8/W8A8 = 1 字节\n• AWQ/GPTQ(4bit) = 0.5 字节\nMoE 模型：所有专家常驻显存，按总参数量计算", "300.1B × 1 字节 (w8a8) = 300.1 GB ≈ 300 GB"],
+  ["权重大小", "模型权重文件大小：取自 ModelScope 模型仓库，以精度最高的文件体积为准\n量化模型：按实际量化后大小显示\nMoE 模型：所有专家常驻显存，按总参数量计算", "示例：Kimi-K2.6-fp8 = 420.17 GB (fp8 量化)"],
   ["KV Cache", "总占用 = 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9（分页效率）\nKV维度 = KV头数 × head_dim（GQA架构）\n• 线性/混合注意力：按 kv_cache_factor 缩减（如 DeepSeek MLA 可压缩至 1/4）\n• 显示值为满并发、满上下文的真实需求", "KV 维度 = 1 (GQA头) × 512 (head_dim) = 512\n标准公式：2 × 43层 × 512 × 204800 × 8 × 1字节 ÷ 0.9\n         ≈ 783 GB  (若按标准 MHA)\nMLA 压缩系数约 0.205 ≈ 160.32 GB"],
   ["激活值", "max-num-batched-tokens × hidden_size × 精度字节 × 2\n（峰值中间张量经验系数，推理过程临时存储）", "≈ max-num-batched-tokens × hidden_size × 精度字节 × 2\n≈ 2048 × 4096 × 2 × 2\n≈ 0.032 GB"],
   ["框架开销", "1.2 GB/卡 × 卡数\n包含：\n• CUDA 上下文  • 算子 workspace（FlashAttention/MatMul 临时空间）\n• TP/PP 通信缓冲（AllReduce buffer）\n• vLLM/PyTorch 框架元数据\n开启 enforce-eager 每卡省约 0.6 GB\n注：卡数越多，固定开销越大", "标准值：1.2 GB/卡 × 4 = 4.8 GB"],
   ["总显存", "权重 + KV Cache + 激活值 + 框架开销\n判定标准：总显存 ≤ 卡数 × 单卡显存 × gpu-memory-utilization（默认 90%）\n若超限，vLLM 会自动降低并发（见\"可容纳并发\"）", "300.1 + 160.32 + 0.03 + 4.80 = 465.25 GB"],
   ["可容纳并发", "(显存预算 − 权重 − 激活值 − 框架开销) ÷ 每路 KV 显存\n显存预算 = 卡数 × 单卡显存 × gpu-memory-utilization", "每路 KV = 160.32 ÷ 8 = 20.04 GB\n可用 KV 空间 = 461 - 300.1 - 0.03 - 4.8 = 156.07 GB\n可容纳 = 156.07 ÷ 20.04 ≈ 7.8 → 取整 7 路"],
   ["单请求 TPS", "保守区间 = 1 ÷ 单 token 耗时\n单 token 耗时 = 激活权重读取时间 + 每 token 固定开销\n• 权重读取 = 激活权重字节 ÷ (聚合带宽 × 带宽利用率)\n• 固定开销 = 层数 × 每层开销 × 系数（MoE/线性/TP/eager）\n区间已按真实部署数据标定", "保守下限 = 1 ÷ (9.15 + 固定开销惩罚) ≈ 71\n上限 = 1 ÷ 9.15 × batch 收益 ≈ 140"],
-  ["TTFT", "TTFT = (2 × 激活参数 × 输入长度 + 注意力 O(n²)) ÷ (算力 × 利用率) + 固定开销\n随输入(prompt)长度增长，长上下文 O(n²) 项主导", "短输入(2K)：≈ 几十~百 ms\n输入(200K)：O(n²)主导，≈ 秒级\n实际值含通信及调度延迟"],
-  ["TPOT", "TPOT = (激活权重 + 本路 KV) ÷ (带宽 × 利用率) + 固定开销\nKV 读取随上下文增长 → 长上下文 TPOT 变大", "激活权重 ≈ 10.99B × 1字节 = 10.99 GB\n本路 KV / 并发 ≈ 160GB / 8 = 20 GB/路\n(10.99 + 20) ÷ (3200 × 80%) ≈ 12 ms\n+ 固定开销 ≈ 4-5 ms → TPOT ≈ 16-17 ms"],
+  ["Mean TTFT", "平均首 token 延迟，计入 chunked prefill 分块、TP 通信放大与队列等待。\n瞬时 TTFT(最优) = (2×激活参数×prompt + O(n²)) ÷ (算力×30%利用率) × TP通信放大 + 固定开销\n平均 = 瞬时 × 分块数 × 排队因子(0.65) 或 ×1.5(无分块时)", "prefill 算力利用率 ~30%(vs decode 60%)\nTP prefill AllReduce 放大 ~1.25^(TP-1)\n短输入多卡: 几十~几百 ms\n长输入(32K+): 数秒"],
+  ["Mean TPOT", "平均每 token 延迟(50%并发负载)。\n瞬时 TPOT(batch=1) = (激活权重 + 本路KV) ÷ (带宽×80%) + 固定开销\n平均 = 改用 50% 并发作为平均 batch 计算", "瞬时 batch=1: 权重全读 ÷ 带宽 ≈ 主体\n平均 batch=50%: 权重摊薄, 吞吐更高\nH100 实测: 30~150 tok/s (7~33ms/token)"],
   ["跨机互联损耗", ">8 卡视为多机部署：\n• 高速无损（NVLink Switch/HCCS）：≈ 无损耗\n• InfiniBand/RoCE：约 -10%\n• 普通以太网：约 -25%，且每 token 跨机延迟更高\n单机内无 NVLink（纯 PCIe）：约 -15%", ""],
   ["量化类型", "• fp8/w8a8 = 8 bit（1 字节/参数）\n• awq/gptq/w4a8/w4a16 = 4 bit（0.5 字节/参数）\n• none = 按 dtype（BF16/FP16）\n量化越激进越省显存，但精度损失越大", ""],
   ["体感评级阈值", "✅ 流畅：TPS ≥ 30 且 TTFT ≤ 2s\n✅ 良好：TPS ≥ 20 且 TTFT ≤ 5s\n🟢 可接受：TPS ≥ 15 且 TTFT ≤ 10s\n🟡 偏慢：TPS ≥ 10 且 TTFT ≤ 20s\n🟠 仅演示:TPS ≥ 5 或 TTFT ≤ 40s\n🔴 离线/批处理：其他（TTFT 过长，仅适合离线任务）", ""],
-  ["说明", "估算为理论近似值，实际推理性能以实测为准；\nsource=estimate 的卡型算力/带宽为占位值，性能仅供参考", ""]
+  ["推理参数", "实际推理时使用的 vLLM 启动参数列表，格式对齐命令行。\n含 --max-model-len / --max-num-seqs / --max-num-batched-tokens\n--gpu-memory-utilization / --dtype / --quantization / --kv-cache-dtype\n--tensor-parallel-size 等；布尔开关仅当开启时显示。", ""]
 ];
 
 /* ================= 1. 测算依据 Sheet (回退至第一个工作表) ================= */

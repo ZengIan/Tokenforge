@@ -69,6 +69,7 @@ KV_DTYPE_BYTES: dict[str, float] = {
 # vLLM 的算力/带宽利用率经验系数
 VLLM_COMPUTE_UTIL = 0.60
 VLLM_MEM_UTIL = 0.80
+PREFILL_COMPUTE_UTIL = 0.30  # prefill 并行效率远低于 decode (AllReduce/调度/注意力不规则)
 
 # 单机最多卡数(超过即视为多机/跨机部署)
 GPUS_PER_NODE = 8
@@ -101,6 +102,7 @@ OVERHEAD_PER_GPU = 1.2 * GB
 # Qwen3-Next 48层 MoE+线性 eager TP4 ≈ 真实 ~9 tok/s。
 PER_LAYER_OVERHEAD_MS = 0.60       # 每层每 token 基础开销(eager 口径)
 CUDA_GRAPH_FACTOR = 0.12           # 开启 CUDA Graph(未 enforce_eager)开销大幅降低
+ASYNC_SCHEDULING_FACTOR = 0.85   # --async-scheduling 异步调度：减少 CPU-GPU 同步开销
 MOE_OVERHEAD_MULT = 1.8            # MoE 的 expert gather/scatter 额外开销
 LINEAR_ATTN_OVERHEAD_MULT = 1.5    # 线性/混合注意力的逐 token 串行递归额外开销
 # 区间(相对中值): 乐观/保守 的开销系数
@@ -355,8 +357,10 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     # TP all-reduce(随 TP 规模)+ PP bubble
     tp_mult = 1.0 + 0.15 * (tp - 1) + 0.05 * (pp - 1)
     graph_mult = 1.0 if inf.enforce_eager else CUDA_GRAPH_FACTOR
+    async_mult = ASYNC_SCHEDULING_FACTOR if inf.async_scheduling else 1.0
     overhead_s = (
         model.num_layers * PER_LAYER_OVERHEAD_MS * arch_mult * tp_mult * graph_mult
+        * async_mult
         * internode_overhead_mult
     ) / 1000.0
 
@@ -364,16 +368,51 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     tpot_single = max(tpot_bw_single, decode_compute_t / max(1, batch)) + overhead_s
     tpot_total = max(tpot_bw_total, decode_compute_t) + overhead_s
 
-    # ---------------- PREFILL → TTFT ----------------
+    # ---------------- PREFILL → TTFT (瞬时 + 平均) ----------------
     # TTFT 随输入(prompt)长度线性增长; 长上下文还有注意力 O(n²) 项。
+    # 瞬时 TTFT: 整个 prompt 一次性 prefill (最优情况, 但仅当 input≤max-num-batched-tokens)
+    # 平均 TTFT: 计入 chunked prefill 分块, 反映真实排队与调度延迟
     in_len = min(inf.input_len, inf.max_model_len)  # prompt 不超过上下文
-    #   FFN/投影(线性): 2 × 激活参数 × prompt; MoE 按激活参数
-    ffn_flops = 2 * active_params * in_len
-    #   注意力(QK^T + AV): ~4 × prompt² × hidden × 层数, 长 prompt 时主导
-    attn_flops = 4 * (in_len ** 2) * model.hidden_size * model.num_layers
-    prefill_flops = ffn_flops + attn_flops
-    ttft = prefill_flops / (flops_replica * compute_util) * (1.0 + 0.10 * (pp - 1))
-    ttft += overhead_s  # prefill 也有逐层 kernel 启动/调度开销
+    # prefill 算力利用率低于 decode(0.60→0.30), 因为:
+    #   * 注意力 O(n²) 不规则访问, Tensor Core 利用率低
+    #   * TP AllReduce 通信在 prefill 中占比更大(大矩阵)
+    #   * kernel 并行度不如 GEMM
+    prefill_cu = inf.compute_util if inf.compute_util is not None else PREFILL_COMPUTE_UTIL
+    # TP all-reduce 对 prefill 的额外放大: TP 越大, 每层通信开销越大
+    tp_prefill_mult = 1.0 + 0.25 * (tp - 1) + 0.10 * (pp - 1)
+
+    def _prefill_ttft(prompt_len: int) -> float:
+        ffn = 2 * active_params * prompt_len
+        attn = 4 * (prompt_len ** 2) * model.hidden_size * model.num_layers
+        flops = ffn + attn
+        t = flops / (flops_replica * prefill_cu) * tp_prefill_mult
+        t += overhead_s  # kernel 启动/调度开销在 prefill 也存在
+        return t
+
+    ttft = _prefill_ttft(in_len)
+
+    # ---- 平均 TTFT (chunked prefill): vLLM 默认 --enable-chunked-prefill ----
+    # 当 prompt 超过 max-num-batched-tokens 时, 需分多个 block 逐步 prefill
+    chunk_max = max(256, inf.max_num_batched_tokens)
+    if in_len > chunk_max:
+        chunks = math.ceil(in_len / chunk_max)
+        # 平均: 约一半的 chunks 已在执行中, 取中位排队
+        chunk_ttft = _prefill_ttft(chunk_max)
+        # 分块之间有调度间隙 ~ overhead_s × 1.5 / chunk
+        mean_ttft = chunk_ttft * chunks * 0.65  # 0.65 = 排队因子(首个 chunk 不排队, 末个等最久)
+    else:
+        # 不需要分块, 但仍有调度排队(openrouter 实测同一请求在空闲/繁忙时 TTFT 差 2-5×)
+        mean_ttft = ttft * 1.5  # 平均排队放大 1.5× (空闲时接近瞬时, 繁忙时多等)
+
+    # ---------------- TPOT → 瞬时 + 平均 ----------------
+    # 瞬时 TPOT (batch=1, 最优延迟)
+    tpot_single = max(tpot_bw_single, decode_compute_t / max(1, batch)) + overhead_s
+    # 平均 TPOT: 使用平均 batch(并发数的一半), 反映正常负载
+    mean_batch = max(1, inf.max_num_seqs / 2)
+    tpot_bw_mean = (weight_read_bytes + kv_per_seq * mean_batch) / (bw_total * mem_util)
+    tpot_mean = max(tpot_bw_single, decode_compute_t / max(1, mean_batch)) + overhead_s
+
+    tpot_total = max(tpot_bw_total, decode_compute_t) + overhead_s
 
     def _safe(x: float) -> float:
         return 1.0 / x if x > 0 else 0.0
@@ -444,7 +483,9 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         single_tps_low=single_tps_low,
         single_tps_high=single_tps_high,
         ttft_ms=ttft * 1000,
+        mean_ttft_ms=mean_ttft * 1000,
         tpot_ms=tpot_eff * 1000,
+        mean_tpot_ms=tpot_mean * 1000,
         request_latency_ms=request_latency * 1000,
         max_fit_seqs=max_fit_seqs,
         bottleneck=bottleneck,

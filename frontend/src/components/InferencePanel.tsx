@@ -180,6 +180,20 @@ export function InferencePanel() {
             onChange={(v) => setInference({ enforce_eager: v })}
           />
         </div>
+        <div className="flex items-end">
+          <Toggle
+            label="异步调度"
+            flag="--async-scheduling"
+            tip={
+              "作用：让调度器异步运行，GPU 执行当前 batch 时 CPU 并行准备下一个 batch，实现计算与调度的流水线重叠。\n\n" +
+              "推荐：高并发在线服务建议开启。\n\n" +
+              "开启后：减少 GPU 等待调度的时间，总吞吐可提升 10–30%；TPOT 略降。显存几乎无额外开销。\n" +
+              "低并发/单请求场景收益很小。"
+            }
+            checked={i.async_scheduling}
+            onChange={(v) => setInference({ async_scheduling: v })}
+          />
+        </div>
       </div>
 
       {/* 跨机互联 (真多机时) */}

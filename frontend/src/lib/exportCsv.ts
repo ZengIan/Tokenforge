@@ -27,10 +27,10 @@ export const COLUMNS = [
   "总显存开销(权重+激活+KV+框架)",
   "可容纳并发数(个)",
   "单用户 TPS(tokens/s)",
-  "首字延迟 TTFT(ms)",
-  "TPOT 每字延迟(ms)",
+  "Mean TTFT 平均首字(ms)",
+  "Mean TPOT 平均每字(ms)",
   "体感评级",
-  "说明",
+  "推理参数",
 ];
 
 /** 体感评级:依据单用户 TPS(取保守下限) 与 TTFT(秒) */
@@ -45,6 +45,40 @@ function rating(tps: number, ttftS: number): [string, string] {
 
 const n2 = (v: number) => Math.round(v * 100) / 100;
 
+/** 生成推理参数描述字符串 */
+function buildInferenceParams(
+  gpuGroups: GpuGroup[],
+  inf: InferenceConfig,
+): string {
+  const nGpu = gpuGroups.reduce((s, g) => s + g.count, 0);
+  const lines: string[] = [];
+  lines.push(`--max-model-len ${inf.max_model_len}`);
+  lines.push(`--max-num-seqs ${inf.max_num_seqs}`);
+  lines.push(`--max-num-batched-tokens ${inf.max_num_batched_tokens}`);
+  lines.push(`--gpu-memory-utilization ${inf.gpu_memory_utilization}`);
+  lines.push(`--dtype ${inf.dtype}`);
+  if (inf.quantization !== "none") {
+    lines.push(`--quantization ${inf.quantization}`);
+  }
+  if (inf.kv_cache_dtype !== "auto") {
+    lines.push(`--kv-cache-dtype ${inf.kv_cache_dtype}`);
+  }
+  if (inf.enforce_eager) {
+    lines.push("--enforce-eager");
+  }
+  if (inf.async_scheduling) {
+    lines.push("--async-scheduling");
+  }
+  if (inf.parallel_enabled) {
+    if (inf.tp_size > 1) lines.push(`--tensor-parallel-size ${inf.tp_size}`);
+    if (inf.pp_size > 1) lines.push(`--pipeline-parallel-size ${inf.pp_size}`);
+    if (inf.dp_size > 1) lines.push(`--data-parallel-size ${inf.dp_size}`);
+  } else {
+    lines.push(`--tensor-parallel-size ${nGpu}`);
+  }
+  return lines.join("\n");
+}
+
 export function buildRecord(
   model: ModelSpec,
   gpuGroups: GpuGroup[],
@@ -56,12 +90,12 @@ export function buildRecord(
   const ctxK = Math.round(inf.max_model_len / 1024);
   const tpsLow = Math.round(r.single_tps_low);
   const tpsHigh = Math.round(r.single_tps_high);
-  const [grade, desc] = rating(r.single_tps_low, r.ttft_ms / 1000);
+  const [grade] = rating(r.single_tps, r.mean_ttft_ms / 1000);
 
   const cells: (string | number)[] = [
     cardName,
     model.model_id,
-    n2(r.memory.weights_gb),
+    model.weight_size_gb ?? n2(r.memory.weights_gb),
     model.params_b,
     inf.quantization,
     nGpu,
@@ -73,10 +107,10 @@ export function buildRecord(
     n2(r.memory.total_gb),
     r.max_fit_seqs,
     tpsLow === tpsHigh ? `${tpsLow}` : `${tpsLow}-${tpsHigh}`,
-    Math.round(r.ttft_ms),
-    n2(r.tpot_ms),
+    Math.round(r.mean_ttft_ms),
+    n2(r.mean_tpot_ms),
     grade,
-    desc,
+    buildInferenceParams(gpuGroups, inf),
   ];
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -87,20 +121,20 @@ export function buildRecord(
 
 /** 测算依据(公式说明),覆盖表格每个指标 + 补充项;附在 CSV 末尾 */
 const BASIS: [string, string][] = [
-  ["权重大小(GB)", "运行时权重显存 = 参数量 × 每参数字节数(量化决定:BF16=2 / FP8·W8=1 / 4bit=0.5) × 组量化开销。MoE 所有专家常驻显存,按总参数算。"],
+  ["权重大小(GB)", "模型权重文件大小：取自 ModelScope 模型仓库，以精度最高的文件体积为准。量化模型按实际量化后大小显示。MoE 所有专家常驻显存,按总参数算。"],
   ["KV cache(GB)", "= 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9(分页)。KV维度=KV头数×head_dim(GQA/MLA/MHA/MQA);线性/混合注意力按 kv_cache_factor 缩减(KV 极小)。显示为满并发满上下文的真实需求。"],
   ["激活值(GB)", "≈ max-num-batched-tokens × hidden_size × 精度字节 × 2(峰值中间张量经验系数)。"],
   ["框架开销(GB)", "≈ 每卡约 1.2GB(CUDA 上下文/算子 workspace/通信缓冲) × 卡数;开启 enforce-eager 每卡省约 0.6GB。"],
   ["总显存开销(GB)", "= 权重 + KV cache + 激活值 + 框架开销(真实需求)。若 > 卡数×单卡显存×gpu-memory-utilization,则放不下全部并发,vLLM 自动降并发(见可容纳并发数)。"],
   ["可容纳并发数(个)", "= (显存预算 − 权重 − 激活 − 框架开销) ÷ 每路 KV 显存;显存预算 = 卡数 × 单卡显存 × gpu-memory-utilization。表示预算内实际能同时跑多少路。"],
   ["单用户 TPS(tokens/s)", "保守区间 = 1 ÷ 单 token 耗时;单 token 耗时 = 激活权重 ÷ (聚合带宽×带宽利用率) + 每 token 固定开销(层数×每层开销×MoE/线性/TP/eager 系数)。区间已按真实部署实测标定。"],
-  ["首字延迟 TTFT(ms)", "= 2 × 激活参数量 × max-num-batched-tokens ÷ (聚合算力 × 算力利用率)。即 prefill(读题)时间,MoE 按激活参数算。"],
-  ["TPOT 每字延迟(ms)", "= 单 token 耗时(权重读取时间 + 每 token 固定开销)。batch=1 时固定开销常占主导,故单请求远低于带宽上限。"],
+  ["Mean TTFT 平均首字(ms)", "平均首 token 延迟,计入 chunked prefill 与队列等待。prefill 算力利用率 ~30%(vs decode 60%);TP AllReduce 额外放大。长 prompt 分块后延迟进一步增长。"],
+  ["Mean TPOT 平均每字(ms)", "平均每 token 延迟(50%并发负载),= (激活权重+平均KV) ÷ (聚合带宽×80%) + 固定开销。batch=1 瞬时更快,平均反映常规负载。"],
   ["效率系数", "算力利用率≈真实算力÷标称算力(受 kernel/通信影响,vLLM 约 60%);带宽利用率≈真实读写÷标称带宽(decode 主要靠它,约 80%)。"],
   ["跨机互联损耗", ">8 卡视为多机:高速无损(NVLink Switch/HCCS)≈无损;InfiniBand/RoCE 约 -10%;普通以太网约 -25%,且每 token 跨机延迟更高。单机内无 NVLink(PCIe) 约 -15%。"],
   ["量化类型", "fp8/w8a8=8bit(1B/参数);awq/gptq/w4a8/w4a16=4bit(0.5B/参数);none=按 dtype。量化越激进越省显存,精度损失越大。"],
   ["体感评级阈值", "✅流畅 TPS≥30且TTFT≤2s;✅良好 TPS≥20且TTFT≤5s;🟢可接受 TPS≥15且TTFT≤10s;🟡偏慢 TPS≥10且TTFT≤20s;🟠仅演示 TPS≥5或TTFT≤40s;🔴其他为离线/批处理。TPS 取单用户保守下限。"],
-  ["说明", "估算为理论近似,实际推理性能以实测为准;国产卡 source=estimate 的算力/带宽为占位值,性能仅供参考。"],
+  ["推理参数", "实际推理时使用的 vLLM 启动参数列表,含 --max-model-len / --max-num-seqs / --tensor-parallel-size 等。"],
 ];
 
 function csvCell(v: string | number): string {
