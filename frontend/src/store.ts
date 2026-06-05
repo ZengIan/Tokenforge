@@ -31,7 +31,13 @@ export const DEFAULT_INFERENCE: InferenceConfig = {
   kv_cache_dtype: "auto",
   gpu_memory_utilization: 0.9,
   enforce_eager: false,
+  intra_node: "auto",
+  gpus_per_node: 8,
   internode: "ib",
+  parallel_enabled: false,
+  tp_size: 1,
+  pp_size: 1,
+  dp_size: 1,
 };
 
 interface State {

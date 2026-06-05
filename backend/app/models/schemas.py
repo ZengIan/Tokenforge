@@ -90,10 +90,19 @@ class InferenceConfig(BaseModel):
     gpu_memory_utilization: float = Field(0.90, ge=0.1, le=1.0)
     # --enforce-eager: 关闭 CUDA Graph
     enforce_eager: bool = False
-    # 跨机互联(仅卡数 > 单机上限的多机部署生效):
+    # 机内互联: auto=按卡库 nvlink 字段; highspeed=有 NVLink/HCCS(无损); pcie=纯 PCIe(-15%)
+    intra_node: Literal["auto", "highspeed", "pcie"] = "auto"
+    # 单机卡数(超过即视为多机/跨机), 如 PPU 单机 16 卡可设 16
+    gpus_per_node: int = Field(8, ge=1, le=64)
+    # 跨机互联(仅卡数 > gpus_per_node 的多机部署生效):
     #   nvlink = NVLink Switch/HCCS 等高速无损互联(几乎无损)
     #   ib = InfiniBand/RoCE 高速网; ethernet = 普通以太网
     internode: InterNode = "ib"
+    # --- 并行配置(可选; 不启用时 TP=总卡数, PP=DP=1) ---
+    parallel_enabled: bool = False
+    tp_size: int = Field(1, ge=1, le=1024)  # --tensor-parallel-size
+    pp_size: int = Field(1, ge=1, le=256)   # --pipeline-parallel-size
+    dp_size: int = Field(1, ge=1, le=256)   # --data-parallel-size
     # optional manual override of bandwidth/compute utilisation [0,1]
     mem_util: Optional[float] = None
     compute_util: Optional[float] = None

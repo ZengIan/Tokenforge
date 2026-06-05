@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../store";
-import type { DType, InterNode, KVCacheDType, Quantization } from "../types";
+import type { DType, InterNode, IntraNode, KVCacheDType, Quantization } from "../types";
 
 const DTYPES: DType[] = ["auto", "float16", "bfloat16", "float32"];
 const QUANTIZATIONS: Quantization[] = [
@@ -159,17 +159,50 @@ export function InferencePanel() {
         </div>
       </div>
 
-      {nGpu > 8 && (
+      {/* 互联拓扑 (单机多卡时) */}
+      {nGpu > 1 && (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <Select
+            label="机内互联"
+            flag="单机卡间"
+            tip={
+              "单机内多张卡之间怎么连，影响张量并行(TP)的 all-reduce 通信效率。\n\n" +
+              "• 自动：按卡库判断（数据中心卡 / 国产 HCCS·xGMI 卡 = 高速；消费 PCIe 卡 = 无高速）。\n" +
+              "• 高速 NVLink/HCCS：卡间有高速直连，TP 通信几乎无损。\n" +
+              "• 纯 PCIe：只走 PCIe，无高速直连，TP 通信开销约 -15%。\n\n" +
+              "国产卡（昇腾/PPU/DCU）若有 HCCS/xGMI 链路拓扑，选'高速'或保持'自动'即可，不会再被误降。"
+            }
+            value={i.intra_node}
+            options={["auto", "highspeed", "pcie"]}
+            optionLabels={{ auto: "自动（按卡库）", highspeed: "高速 NVLink/HCCS", pcie: "纯 PCIe（无高速）" }}
+            onChange={(v) => setInference({ intra_node: v as IntraNode })}
+          />
+          <NumberField
+            label="单机卡数"
+            flag="每机 GPU 数"
+            tip={
+              "一台物理服务器里的 GPU 数量（常见 8）。超过这个数就按多机部署计算跨机通信损耗。\n\n" +
+              "如果你的整机就是 16 卡（如 PPU 单机 16 卡 96G），把这里改成 16，就不会被误判成多机。"
+            }
+            value={i.gpus_per_node}
+            min={1}
+            max={64}
+            onChange={(v) => setInference({ gpus_per_node: v })}
+          />
+        </div>
+      )}
+
+      {/* 跨机互联 (真多机时) */}
+      {nGpu > i.gpus_per_node && (
         <div className="mt-2">
           <Select
-            label={`跨机互联（${Math.ceil(nGpu / 8)} 机 ${nGpu} 卡）`}
+            label={`跨机互联（${Math.ceil(nGpu / Math.max(1, i.gpus_per_node))} 机 ${nGpu} 卡）`}
             flag="多机部署"
             tip={
-              "超过 8 卡就是多机部署，跨机通信比机内 NVLink/HCCS 慢，会拖低算力效率。\n\n" +
+              "卡数超过单机卡数 = 多机部署，跨机通信比机内 NVLink/HCCS 慢，会拖低算力效率。\n\n" +
               "• 高速无损(NVLink Switch/HCCS)：跨机也是高速互联，几乎无损耗。\n" +
               "• InfiniBand/RoCE：常规高速网，约 10% 损耗。\n" +
-              "• 普通以太网：约 25% 损耗，且每 token 跨机延迟更高。\n\n" +
-              "选对你的实际组网方式，估算才准。"
+              "• 普通以太网：约 25% 损耗，且每 token 跨机延迟更高。"
             }
             value={i.internode}
             options={["nvlink", "ib", "ethernet"]}
@@ -182,6 +215,66 @@ export function InferencePanel() {
           />
         </div>
       )}
+
+      {/* 并行配置 (TP/PP/DP) */}
+      <div className="mt-2">
+        <Toggle
+          label="自定义并行 (TP/PP/DP)"
+          flag="--*-parallel-size"
+          tip={
+            "是否手动指定并行切分。不勾选时默认按总卡数做张量并行（TP=卡数，PP=DP=1）。\n\n" +
+            "• TP 张量并行：把每一层横切到多卡并行算，降单卡显存与单请求延迟。\n" +
+            "• PP 流水线并行：把不同层分到不同卡(流水线)，省卡间带宽、适合跨机，但有流水 bubble。\n" +
+            "• DP 数据并行：整套模型复制多份各服务不同请求，提升总吞吐(每份都占一份权重显存)。\n\n" +
+            "⚠ 三者乘积必须 = 总卡数；TP 必须整除注意力头数；PP 必须整除层数，否则模型直接起不来。"
+          }
+          checked={i.parallel_enabled}
+          onChange={(v) =>
+            setInference(
+              v
+                ? { parallel_enabled: true, tp_size: nGpu, pp_size: 1, dp_size: 1 }
+                : { parallel_enabled: false },
+            )
+          }
+        />
+        {i.parallel_enabled && (
+          <div className="mt-1 grid grid-cols-3 gap-2">
+            <NumberField
+              label="张量并行 TP"
+              flag="--tensor-parallel-size"
+              tip={
+                "把模型每一层横切到 TP 张卡上并行算。\n• 降单卡权重/激活显存、降单请求延迟。\n• 需 TP 整除注意力头数(及 KV 头数)。\n• TP 越大卡间 all-reduce 越多，建议不超过单机卡数。"
+              }
+              value={i.tp_size}
+              min={1}
+              max={1024}
+              onChange={(v) => setInference({ tp_size: v })}
+            />
+            <NumberField
+              label="流水线 PP"
+              flag="--pipeline-parallel-size"
+              tip={
+                "把模型按层数纵向切成 PP 段分到不同卡(流水线)。\n• 卡间只传激活、省带宽，适合跨机。\n• 需 PP 整除层数；有流水线 bubble，单请求延迟略增。\n• 与 --max-num-batched-tokens 相关：批太小流水线填不满、吞吐下降。"
+              }
+              value={i.pp_size}
+              min={1}
+              max={256}
+              onChange={(v) => setInference({ pp_size: v })}
+            />
+            <NumberField
+              label="数据并行 DP"
+              flag="--data-parallel-size"
+              tip={
+                "整套模型复制 DP 份，各自服务不同请求。\n• 总吞吐近似 ×DP，卡间几乎无通信。\n• 每份都要完整放下权重→单卡权重显存不随 DP 降低。\n• 适合显存放得下、想堆吞吐的场景。"
+              }
+              value={i.dp_size}
+              min={1}
+              max={256}
+              onChange={(v) => setInference({ dp_size: v })}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -49,6 +49,7 @@ export type Quantization =
   | "w4a16";
 export type KVCacheDType = "auto" | "fp8" | "fp8_e5m2" | "fp8_e4m3" | "int8";
 export type InterNode = "nvlink" | "ib" | "ethernet";
+export type IntraNode = "auto" | "highspeed" | "pcie";
 
 export interface InferenceConfig {
   max_model_len: number;
@@ -59,7 +60,13 @@ export interface InferenceConfig {
   kv_cache_dtype: KVCacheDType;
   gpu_memory_utilization: number;
   enforce_eager: boolean;
+  intra_node: IntraNode;
+  gpus_per_node: number;
   internode: InterNode;
+  parallel_enabled: boolean;
+  tp_size: number;
+  pp_size: number;
+  dp_size: number;
   mem_util?: number | null;
   compute_util?: number | null;
 }
