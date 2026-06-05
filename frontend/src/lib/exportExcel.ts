@@ -10,9 +10,9 @@ export interface ExportRecord {
 /* ================= 样式常量 (取自模板) ================= */
 const FONT = "微软雅黑";
 const TITLE_FILL = "FF2E5F8F"; // 标题行
-const HEAD_FILL = "FF1F4E78";  // 表头
-const BODY_FILL = "FFF7FBFE";  // 测算依据 说明列底色
-const GRAY_FILL = "FFF2F2F2";  // 图例标题底色
+const HEAD_FILL = "FF1F4E78"; // 表头
+const BODY_FILL = "FFF7FBFE"; // 测算依据 说明列底色
+const GRAY_FILL = "FFF2F2F2"; // 图例标题底色
 const BORDER_RGB = "FFBFBFBF";
 
 const border: Partial<ExcelJS.Borders> = {
@@ -21,7 +21,6 @@ const border: Partial<ExcelJS.Borders> = {
   left: { style: "thin", color: { argb: BORDER_RGB } },
   right: { style: "thin", color: { argb: BORDER_RGB } },
 };
-
 const CENTER: Partial<ExcelJS.Alignment> = { vertical: "middle", horizontal: "center", wrapText: true };
 const LEFT: Partial<ExcelJS.Alignment> = { vertical: "middle", horizontal: "left", wrapText: true };
 const fill = (argb: string): ExcelJS.Fill => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
@@ -60,23 +59,23 @@ const n2 = (v: number) => Math.round(v * 100) / 100;
 /* ================= 性能估算 18 列 (名称/列宽完全对齐模板) ================= */
 const COLS: { h: string; w: number }[] = [
   { h: "算力卡类型", w: 18.1 },
-  { h: "模型", w: 24.0 },
-  { h: "权重大小(GB)", w: 14.5 },
+  { h: "模型", w: 22.0 },
+  { h: "权重大小(GB)", w: 13.7 },
   { h: "参数量(B)", w: 13.4 },
   { h: "量化类型", w: 14.1 },
   { h: "GPU配置(卡)", w: 14.8 },
   { h: "上下文(k)", w: 12.0 },
-  { h: "期望\n并发数（个）", w: 13.5 },
-  { h: "KV cache (GB)", w: 15.5 },
-  { h: "激活值(GB)", w: 14.5 },
+  { h: "期望\n并发数（个）", w: 12.8 },
+  { h: "KV cache (GB)", w: 14.9 },
+  { h: "激活值(GB)", w: 14.9 },
   { h: "框架开销(GB)", w: 14.2 },
-  { h: "总显存开销(GB)\n(权重+激活+KV+框架)", w: 22.0 },
+  { h: "总显存开销\n(权重+激活+KV+框架)", w: 13.0 },
   { h: "可容纳\n并发数(个)", w: 13.0 },
-  { h: "单用户 TPS\n(tokens/s)", w: 15.0 },
-  { h: "首字延迟\nTTFT(ms)", w: 13.0 },
-  { h: "TPOT 每字延迟(ms)", w: 16.0 },
-  { h: "体感评级", w: 13.0 },
-  { h: "说明", w: 30.0 },
+  { h: "单用户 TPS\n(tokens/s)", w: 13.0 },
+  { h: "首字延迟\nTTFT(ms)", w: 11.0 },
+  { h: "TPOT 每字延迟(ms)", w: 11.0 },
+  { h: "体感评级", w: 11.0 },
+  { h: "说明", w: 28.0 },
 ];
 const N = COLS.length; // 18
 const TITLE = "模型推理性能矩阵 · 按上下文长度递增、并发递减";
@@ -121,38 +120,34 @@ export function buildRecord(
   };
 }
 
-/* ================= 测算依据数据 ================= */
-const JISUAN_HEADER = ["指标", "说明", "示例： Ascend 910C (128G) × 4 卡，DeepSeek-V4-Flash-w8a8-mtp (300.1B 参数，w8a8 量化)\n上下文：200K，期望并发：8"];
+/* ================= 测算依据 (原样取自模板) ================= */
+const JISUAN_HEADER = ["指标", "说明", "示例： Ascend 910C (128G) × 4 卡，DeepSeek-V4-Flash-w8a8-mtp (300.1B 参数，w8a8 量化)上下文：200K，期望并发：8"];
+const JISUAN_HEIGHTS = [32, 64.5, 89.2, 62.2, 81.4, 51, 49.9, 36, 36, 44.2, 69.8, 50.6, 95.2, 27.8];
 const JISUAN_ROWS: [string, string, string][] = [
-  ["权重大小", "运行时权重显存 = 参数量(B) × 每参数字节 × 组量化开销\n每参数字节：\n• BF16/FP16 = 2 字节  • FP8/W8A8 = 1 字节\n• AWQ/GPTQ(4bit) = 0.5 字节\nMoE 模型：所有专家常驻显存，按总参数量计算", "300.1B × 1 字节 (w8a8) = 300.1 GB ≈ 300 GB"],
-  ["KV Cache", "总占用 = 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9（分页效率）\nKV维度 = KV头数 × head_dim（GQA架构）\n• 线性/混合注意力：按 kv_cache_factor 缩减（如 DeepSeek MLA 可压缩至 1/4）\n• 显示值为满并发、满上下文的真实需求", "KV 维度 = 1 (GQA头) × 512 (head_dim) = 512\n标准公式：2 × 43层 × 512 × 204800 × 8 × 1字节 ÷ 0.9\n         ≈ 783 GB  (若按标准 MHA)\nMLA 压缩系数约 0.205 ≈ 160.32 GB"],
-  ["激活值", "max-num-batched-tokens × hidden_size × 精度字节 × 2\n（峰值中间张量经验系数，推理过程临时存储）", "≈ max-num-batched-tokens × hidden_size × 精度字节 × 2\n≈ 2048 × 4096 × 2 × 2\n≈ 0.032 GB"],
-  ["框架开销", "1.2 GB/卡 × 卡数\n包含：\n• CUDA 上下文  • 算子 workspace（FlashAttention/MatMul 临时空间）\n• TP/PP 通信缓冲（AllReduce buffer）\n• vLLM/PyTorch 框架元数据\n开启 enforce-eager 每卡省约 0.6 GB\n注：卡数越多，固定开销越大", "标准值：1.2 GB/卡 × 4 = 4.8 GB"],
-  ["总显存", "权重 + KV Cache + 激活值 + 框架开销\n判定标准：总显存 ≤ 卡数 × 单卡显存 × gpu-memory-utilization（默认 90%）\n若超限，vLLM 会自动降低并发（见\"可容纳并发\"）", "300.1 + 160.32 + 0.03 + 4.80 = 465.25 GB"],
-  ["可容纳并发", "(显存预算 − 权重 − 激活值 − 框架开销) ÷ 每路 KV 显存\n显存预算 = 卡数 × 单卡显存 × gpu-memory-utilization", "每路 KV = 160.32 ÷ 8 = 20.04 GB\n可用 KV 空间 = 461 - 300.1 - 0.03 - 4.8 = 156.07 GB\n可容纳 = 156.07 ÷ 20.04 ≈ 7.8 → 取整 7 路"],
-  ["单请求 TPS", "保守区间 = 1 ÷ 单 token 耗时\n单 token 耗时 = 激活权重读取时间 + 每 token 固定开销\n• 权重读取 = 激活权重字节 ÷ (聚合带宽 × 带宽利用率)\n• 固定开销 = 层数 × 每层开销 × 系数（MoE/线性/TP/eager）\n区间已按真实部署数据标定", "保守下限 = 1 ÷ (9.15 + 固定开销惩罚) ≈ 71\n上限 = 1 ÷ 9.15 × batch 收益 ≈ 140"],
-  ["TTFT", "2 × 激活参数量 × max-num-batched-tokens ÷ (聚合算力 × 算力利用率)\n即 prefill（读题）阶段耗时\nMoE 模型按激活参数量计算（每 token 只过 top-k 专家）", "Prefill FLOPs = 2 × 10.99B × 2048 = 45 T\n算力 = 4 × 989 × 50% (利用率) = 1978 T\nTTFT = 45 ÷ 1978 ≈ 23 ms（实际含通信 28 ms）"],
-  ["TPOT", "单 token 耗时 = 权重读取时间 + 每 token 固定开销\nbatch=1 时固定开销常占主导，故单请求远低于带宽上限", "权重读取 = 10.99B × 1字节 ÷ (3200 × 80%) ≈ 4.3 ms\n固定开销 ≈ 4-5 ms\nTPOT ≈ 9-10 ms"],
-  ["跨机互联损耗", ">8 卡视为多机部署：\n• 高速无损（NVLink Switch/HCCS）：≈ 无损耗\n• InfiniBand/RoCE：约 -10%\n• 普通以太网：约 -25%，且每 token 跨机延迟更高\n单机内无 NVLink（纯 PCIe）：约 -15%", ""],
-  ["量化类型", "• fp8/w8a8 = 8 bit（1 字节/参数）\n• awq/gptq/w4a8/w4a16 = 4 bit（0.5 字节/参数）\n• none = 按 dtype（BF16/FP16）\n量化越激进越省显存，但精度损失越大", ""],
+  ["权重大小", "运行时权重显存 = 参数量(B) × 每参数字节 × 组量化开销每参数字节：\n• BF16/FP16 = 2 字节• FP8/W8A8 = 1 字节\n• AWQ/GPTQ(4bit) = 0.5 字节MoE 模型：所有专家常驻显存，按总参数量计算", " 300.1B × 1 字节 (w8a8) = 300.1 GB ≈ 300 GB"],
+  ["KV Cache", "总占用 = 2 × 层数 × KV维度 × 上下文长度 × 并发数 × KV字节 ÷ 0.9（分页效率）KV维度 = KV头数 × head_dim（GQA架构）\n• 线性/混合注意力：按 kv_cache_factor 缩减（如 DeepSeek MLA 可压缩至 1/4）\n• 显示值为满并发、满上下文的真实需求", "KV 维度 = 1 (GQA头) × 512 (head_dim) = 512\n标准公式：2 × 43层 × 512 × 204800 × 8 × 1字节 ÷ 0.9\n        ≈ 783 GB  (若按标准 MHA)\nMLA 压缩系数约 0.205 ≈ 160.32 GB"],
+  ["激活值", "max-num-batched-tokens × hidden_size × 精度字节 × 2（峰值中间张量经验系数，推理过程临时存储）", "≈ max-num-batched-tokens × hidden_size × 精度字节 × 2\n≈ 2048 × 4096 × 2 × 2\n≈ 0.032 GB"],
+  ["框架开销", "1.2 GB/卡 × 卡数包含：\n• CUDA 上下文• 算子 workspace（FlashAttention/MatMul 临时空间）\n• TP/PP 通信缓冲（AllReduce buffer）\n• vLLM/PyTorch 框架元数据开启 enforce-eager 每卡省约 0.6 GB\n注：卡数越多，固定开销越大", "标准值：1.2 GB/卡 × 4 = 4.8 GB"],
+  ["总显存", "权重 + KV Cache + 激活值 + 框架开销判定标准：总显存 ≤ 卡数 × 单卡显存 × gpu-memory-utilization（默认 90%）若超限，vLLM 会自动降低并发（见\"可容纳并发\"）", "300.1 + 160.32 + 0.03 + 4.80 = 465.25 GB"],
+  ["可容纳并发", "(显存预算 − 权重 − 激活值 − 框架开销) ÷ 每路 KV 显存显存预算 = 卡数 × 单卡显存 × gpu-memory-utilization", "每路 KV = 160.32 ÷ 8 = 20.04 GB\n可用 KV 空间 = 461 - 300.1 - 0.03 - 4.8 = 156.07 GB\n可容纳 = 156.07 ÷ 20.04 ≈ 7.8 → 取整 7 路"],
+  ["单请求 TPS", "保守区间 = 1 ÷ 单 token 耗时单 token 耗时 = 激活权重读取时间 + 每 token 固定开销\n• 权重读取 = 激活权重字节 ÷ (聚合带宽 × 带宽利用率)\n• 固定开销 = 层数 × 每层开销 × 系数（MoE/线性/TP/eager）区间已按真实部署数据标定", "保守下限 = 1 ÷ (9.15 + 固定开销惩罚) ≈ 71\n上限 = 1 ÷ 9.15 × batch 收益 ≈ 140"],
+  ["TTFT", "TTFT = (2 × 激活参数 × 输入长度 + 注意力 O(n²)) ÷ (算力 × 利用率) + 固定开销。随输入(prompt)长度增长，长上下文 O(n²) 项主导。", "短输入(2K)多卡 ≈ 几十~百 ms；长输入(8K~32K) ≈ 秒级"],
+  ["TPOT", "TPOT = (激活权重 + 本路 KV) ÷ (带宽 × 利用率) + 固定开销。KV 读取随上下文增长 → 长上下文 TPOT 变大。", "70B 单 H100 ≈ 55-75ms；H100 实测 30~150 tok/s"],
+  ["跨机互联损耗", ">8 卡视为多机部署：\n• 高速无损（NVLink Switch/HCCS）：≈ 无损耗\n• InfiniBand/RoCE：约 -10%\n• 普通以太网：约 -25%，且每 token 跨机延迟更高单机内无 NVLink（纯 PCIe）：约 -15%", ""],
+  ["量化类型", "• fp8/w8a8 = 8 bit（1 字节/参数）\n• awq/gptq/w4a8/w4a16 = 4 bit（0.5 字节/参数）\n• none = 按 dtype（BF16/FP16）量化越激进越省显存，但精度损失越大", ""],
   ["体感评级阈值", "✅ 流畅：TPS ≥ 30 且 TTFT ≤ 2s\n✅ 良好：TPS ≥ 20 且 TTFT ≤ 5s\n🟢 可接受：TPS ≥ 15 且 TTFT ≤ 10s\n🟡 偏慢：TPS ≥ 10 且 TTFT ≤ 20s\n🟠 仅演示:TPS ≥ 5 或 TTFT ≤ 40s\n🔴 离线/批处理：其他（TTFT 过长，仅适合离线任务）", ""],
-  ["说明", "估算为理论近似值，实际推理性能以实测为准；\nsource=estimate 的卡型算力/带宽为占位值，性能仅供参考", ""]
+  ["说明", "估算为理论近似值，实际推理性能以实测为准；source=estimate 的卡型算力/带宽为占位值，性能仅供参考", ""],
 ];
 
-/* ================= 1. 测算依据 Sheet (回退至第一个工作表) ================= */
+/* ================= 生成 ================= */
 function buildJisuanSheet(wb: ExcelJS.Workbook) {
   const ws = wb.addWorksheet("测算依据");
-  ws.views = [{ showGridLines: true }]; // 强制显示网格线
-  
   ws.getColumn(1).width = 18;
-  ws.getColumn(2).width = 70.0; // 🔍 依据要求：说明列由 85 调紧凑至 70
-  ws.getColumn(3).width = 60.0;
+  ws.getColumn(2).width = 84.8;
+  ws.getColumn(3).width = 59.7;
 
-  // 表头自适应高度
   const h = ws.addRow(JISUAN_HEADER);
-  const hLines = Math.max(...JISUAN_HEADER.map(val => String(val).split('\n').length));
-  h.height = Math.max(hLines * 16 + 16, 42); 
-
+  h.height = JISUAN_HEIGHTS[0];
   h.getCell(1).font = font({ bold: true, size: 11, color: { argb: "FFFFFFFF" } });
   h.getCell(2).font = font({ bold: true, size: 11, color: { argb: "FFFFFFFF" } });
   h.getCell(3).font = font({ bold: true, size: 10, color: { argb: "FFFFFFFF" } });
@@ -162,38 +157,29 @@ function buildJisuanSheet(wb: ExcelJS.Workbook) {
     h.getCell(i).border = border;
   }
 
-  JISUAN_ROWS.forEach((row) => {
+  JISUAN_ROWS.forEach((row, idx) => {
     const r = ws.addRow(row);
-    
-    // 基于动态折行数自适应计算最优行高，预防文本被裁剪
-    const maxLines = Math.max(...row.map(val => String(val).split('\n').length));
-    r.height = Math.max(maxLines * 16 + 16, 28); 
-
+    r.height = JISUAN_HEIGHTS[idx + 1];
     r.getCell(1).font = font({ bold: true, size: 10 });
     r.getCell(1).alignment = CENTER;
     r.getCell(1).border = border;
-    
     r.getCell(2).font = font({ size: 10 });
     r.getCell(2).alignment = LEFT;
     r.getCell(2).fill = fill(BODY_FILL);
     r.getCell(2).border = border;
-    
     r.getCell(3).font = font({ size: 10 });
     r.getCell(3).alignment = LEFT;
     r.getCell(3).border = border;
   });
 }
 
-/* ================= 2. 性能估算 Sheet (作为第二个工作表) ================= */
 function buildMatrixSheet(wb: ExcelJS.Workbook, records: ExportRecord[]) {
   const ws = wb.addWorksheet("性能估算");
-  ws.views = [{ showGridLines: true }];
-  
   COLS.forEach((c, i) => (ws.getColumn(i + 1).width = c.w));
 
   // 标题
   const title = ws.addRow([TITLE]);
-  title.height = 36;
+  title.height = 32;
   ws.mergeCells(1, 1, 1, N);
   for (let i = 1; i <= N; i++) {
     const c = title.getCell(i);
@@ -204,7 +190,7 @@ function buildMatrixSheet(wb: ExcelJS.Workbook, records: ExportRecord[]) {
 
   // 表头
   const hdr = ws.addRow(COLS.map((c) => c.h));
-  hdr.height = 42;
+  hdr.height = 40;
   hdr.eachCell((c: ExcelJS.Cell, i: number) => {
     c.fill = fill(HEAD_FILL);
     c.font = font({ bold: true, size: i >= 3 && i <= 5 ? 11 : 10, color: { argb: "FFFFFFFF" } });
@@ -215,26 +201,13 @@ function buildMatrixSheet(wb: ExcelJS.Workbook, records: ExportRecord[]) {
   // 数据行
   for (const rec of records) {
     const row = ws.addRow(rec.cells);
-    row.height = 28;
+    row.height = 42;
     const ratingFill = fillOfLabel(String(rec.cells[16]));
-    
     row.eachCell((c: ExcelJS.Cell, i: number) => {
       c.font = font({ size: 10 });
       c.border = border;
       c.alignment = i === 1 || i === 2 || i === 18 ? LEFT : CENTER;
-      
-      // 显存与开销等高频数字千分位及小数格式化
-      if ([3, 4, 9, 10, 11, 12, 16].includes(i)) {
-        c.numFmt = '#,##0.00';
-      } else if ([6, 7, 8, 13, 15].includes(i)) {
-        c.numFmt = '#,##0';
-      }
-      
-      if (i === 17 && ratingFill) {
-        c.fill = fill(ratingFill);
-        const matched = RATINGS.find((r) => r.label === c.value);
-        if (matched) c.font = font({ bold: true, size: 10, color: { argb: matched.text } });
-      }
+      if (i === 17 && ratingFill) c.fill = fill(ratingFill); // 体感评级列着色
     });
   }
 
@@ -254,33 +227,24 @@ function buildMatrixSheet(wb: ExcelJS.Workbook, records: ExportRecord[]) {
     lr.getCell(2).value = rt.label;
     lr.getCell(3).value = rt.rule;
     lr.getCell(6).value = rt.desc;
-    
-    ws.mergeCells(lr.number, 3, lr.number, 5);
-    ws.mergeCells(lr.number, 6, lr.number, N);
-    
-    for (let i = 2; i <= N; i++) {
-      const c = lr.getCell(i);
-      c.border = border;
-      if (i >= 2 && i <= 5) {
-        c.fill = fill(rt.fill);
-        c.font = font({ bold: true, size: 10, color: { argb: rt.text } });
-        c.alignment = CENTER;
-      } else if (i >= 6) {
-        c.font = font({ size: 10 });
-        c.alignment = LEFT;
-      }
+    ws.mergeCells(lr.number, 3, lr.number, 5); // C:E 阈值
+    ws.mergeCells(lr.number, 6, lr.number, N); // F:R 说明
+    for (const i of [2, 3]) {
+      lr.getCell(i).fill = fill(rt.fill);
+      lr.getCell(i).font = font({ bold: true, size: 10, color: { argb: rt.text } });
+      lr.getCell(i).alignment = CENTER;
+      lr.getCell(i).border = border;
     }
+    lr.getCell(6).font = font({ size: 10 });
+    lr.getCell(6).alignment = LEFT;
+    lr.getCell(6).border = border;
   }
 }
 
-/* ================= 外部调用下载方法 ================= */
 export async function downloadExcel(records: ExportRecord[], filename = "模型推理性能估算.xlsx") {
   const wb = new ExcelJS.Workbook();
-  
-  // 💡 调整顺序：将“测算依据”放到前面最左边，“性能估算”放到后面右边
   buildJisuanSheet(wb);
   buildMatrixSheet(wb, records);
-  
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
