@@ -103,28 +103,26 @@ function MetricCards({ r }: { r: EstimateResponse }) {
         "表示预算内最多能同时容纳多少路并发。",
     },
     {
-      label: "TTFT平均首字延迟",
-      value: r.mean_ttft_ms.toFixed(0),
+      label: "TTFT 首字延迟",
+      value: r.ttft_ms.toFixed(0),
       unit: "ms",
       tip:
-        "平均首 token 延迟，计入 chunked prefill 分块与队列等待。\n" +
-        "瞬时 TTFT (最优): " + r.ttft_ms.toFixed(0) + " ms\n" +
-        "= (2 × 激活参数 × 输入长度 + 注意力 O(n²)) ÷ (算力 × prefill利用率0.30) + TP通信 + 固定开销\n" +
-        "★ prefill 算力利用率约 30%(vs decode 60%)，因注意力不规则 & TP AllReduce 占比大。\n" +
-        "★ 长 prompt 还会触发 chunked prefill 分块，进一步放大延迟。\n" +
-        "短输入多卡下通常几十~几百 ms；长输入(32K+)可达数秒。",
+        "prefill(读题)时间——算力瓶颈，同时随【输入长度】和【并发】增长。\n" +
+        "= 单请求prefill × 并发争抢系数 + 固定开销\n" +
+        "  单请求 = (2×激活参数×输入长度 + 注意力O(n²)) ÷ (算力×利用率)\n" +
+        "  并发争抢 = (并发+1)/2 —— prefill 算力守恒，多路并发排队拉高首字\n" +
+        "★ 长 prompt(O(n²)) + 高并发会让 TTFT 到秒级；这是平均值，P99 更高。",
     },
     {
-      label: "TPOT平均每字延迟",
-      value: r.mean_tpot_ms.toFixed(2),
+      label: "TPOT 每字延迟",
+      value: r.tpot_ms.toFixed(2),
       unit: "ms",
       tip:
-        "平均每 token 延迟(50%并发负载下)，显存带宽瓶颈。\n" +
-        "瞬时 TPOT (batch=1): " + r.tpot_ms.toFixed(2) + " ms\n" +
-        "= (激活权重 + 平均 KV) ÷ (聚合带宽 × 利用率) + 每 token 固定开销\n" +
-        "• KV 读取随上下文长度增长 → 长上下文 TPOT 逐步变大。\n" +
-        "• 固定开销 = 层数 × 每层开销 × (MoE/线性/TP/eager/async 系数)。\n" +
-        "H100 实测一般 30~150 tok/s (TPOT 7~33ms)。",
+        "每生成 1 个 token 的耗时，显存带宽瓶颈。\n" +
+        "= (激活权重 + 本路 KV) ÷ (带宽 × 利用率) + 每 token 固定开销\n" +
+        "• KV 读取随上下文(输入长度)增长 → 长上下文 TPOT 逐步变大。\n" +
+        "• 固定开销 = 层数 × 每层开销 ×(MoE/线性/TP/eager 系数)。\n" +
+        "H100 实测一般 30~150 tok/s(TPOT 7~33ms)。",
     },
     {
       label: "总显存占用",
@@ -133,7 +131,7 @@ function MetricCards({ r }: { r: EstimateResponse }) {
       tip:
         "这套配置的真实显存需求 = 模型权重 + KV Cache + 激活值 + 框架开销\n" +
         "(KV 按 max-model-len × max-num-seqs 满算)。\n" +
-        "可能超过物理显存——超了说明放不下全部并发，vLLM 会自动降并发(见「可容纳并发」)。",
+        "可能超过物理显存——超了说明放不下全部并发，vLLM 会自动降并发(见“可容纳并发”)。",
     },
     {
       label: "单卡占用",
@@ -151,7 +149,7 @@ function MetricCards({ r }: { r: EstimateResponse }) {
         "= 显存需求 ÷ 显存预算(总显存 × gpu-memory-utilization)\n" +
         "<100%：放得下，还有余量；\n" +
         "=100%：刚好占满预算；\n" +
-        ">100%：放不下全部请求，vLLM 会把并发降到「可容纳并发」路。",
+        ">100%：放不下全部请求，vLLM 会把并发降到“可容纳并发”路。",
     },
   ];
   return (
@@ -186,7 +184,7 @@ const MEM_FORMULA =
   "   (线性/混合注意力按 kv_cache_factor 缩减)\n" +
   "• 激活值 ≈ max-num-batched-tokens × hidden_size × 字节 × 2\n" +
   "• 框架开销 ≈ 每卡 1.2GB（CUDA 上下文等），enforce-eager 省约 0.6GB/卡\n\n" +
-  "若需求 > 显存预算，vLLM 会自动降低并发(见「可容纳并发」)，不是直接 OOM。";
+  "若需求 > 显存预算，vLLM 会自动降低并发(见“可容纳并发”)，不是直接 OOM。";
 
 function MemoryBreakdownChart({ r }: { r: EstimateResponse }) {
   const total = r.memory.total_gb || 1;

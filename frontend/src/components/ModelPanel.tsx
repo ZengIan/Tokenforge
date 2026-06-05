@@ -119,9 +119,8 @@ export function ModelPanel() {
     skipNext.current = true; // 防止填入模型名后又自动检索一次
     setOpen(false);
     setQ(r.model_id);
-    // 按模型名自动匹配量化方式(如 ...-w4a8 / -fp8 / -awq)，避免手动选错
-    const q = quantFromName(r.model_id);
-    if (q) setInference({ quantization: q });
+    // 按模型名自动匹配量化方式(如 ...-w4a8 / -fp8 / -awq); 名字不带量化标识 → none
+    setInference({ quantization: quantFromName(r.model_id) ?? "none" });
     // 官方仓库大小 (StorageSize) 来自搜索结果,作为权重大小的权威来源
     try {
       const detail = await fetchModelDetail(r.model_id);

@@ -407,17 +407,13 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
             if wgb:
                 spec.weight_size_gb = wgb
 
-            # 处理参数量
+            # 处理参数量: 只认 ModelScope 官方值(ReadMe "X B in total"); 名字含 "XB" 兜底;
+            # 都没有则保持为 0, 由用户照 ModelScope 卡片手动填(不走公式推算, 避免误差)。
             if html_params:
                 spec.params_b = html_params
                 spec.params_accurate = True
             elif name_params > 0:
                 spec.params_accurate = True
-            elif wgb:
-                inferred = params_from_storage(wgb * 1e9, model_id)
-                if inferred:
-                    spec.params_b = inferred
-                    spec.params_accurate = False
     except Exception:
         config_found = False
 
