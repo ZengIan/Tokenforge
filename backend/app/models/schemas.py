@@ -80,6 +80,8 @@ class InferenceConfig(BaseModel):
     max_num_seqs: int = Field(256, ge=1, le=8192)
     # --max-num-batched-tokens: 单次迭代最多处理 token 数 (prefill 分块)
     max_num_batched_tokens: int = Field(8192, ge=256, le=1048576)
+    # 输入长度(Prompt tokens): 仅用于估算 TTFT(首字延迟随它线性增长)
+    input_len: int = Field(2048, ge=1, le=1048576)
     # --dtype: 计算精度
     dtype: DType = "auto"
     # --quantization: 权重量化方法

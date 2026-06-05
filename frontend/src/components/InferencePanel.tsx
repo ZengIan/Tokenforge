@@ -89,6 +89,29 @@ export function InferencePanel() {
         onChange={(v) => setInference({ max_num_batched_tokens: v })}
       />
       <NumberField
+        label="输入长度 (Prompt)"
+        flag="仅影响 TTFT"
+        tip={
+          "你的问题/上下文有多少个字(token)——只用来估算首字延迟(TTFT)。\n\n" +
+          "为什么单独给：TTFT 几乎完全取决于 prompt 长度。\n" +
+          "• 短输入(几百~2K，普通对话)：多卡下 TTFT 就是几十~几百毫秒(正常)。\n" +
+          "• 长输入(4K~32K+，RAG/长文档/多轮历史)：TTFT 会到 0.5~3 秒甚至更久。\n" +
+          "• 超长(128K+)：注意力 O(n²) 让 TTFT 进一步飙升。\n\n" +
+          "按你实际业务的典型 prompt 长度填，TTFT 才准。"
+        }
+        value={i.input_len}
+        min={1}
+        max={1048576}
+        onChange={(v) => setInference({ input_len: v })}
+        presets={[
+          { label: "512", v: 512 },
+          { label: "2K", v: 2048 },
+          { label: "8K", v: 8192 },
+          { label: "32K", v: 32768 },
+        ]}
+        onPreset={(v) => setInference({ input_len: v })}
+      />
+      <NumberField
         label="显存利用率"
         flag="--gpu-memory-utilization"
         tip={

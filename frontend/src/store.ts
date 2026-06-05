@@ -26,6 +26,7 @@ export const DEFAULT_INFERENCE: InferenceConfig = {
   max_model_len: 8192,
   max_num_seqs: 16,
   max_num_batched_tokens: 2048,
+  input_len: 2048,
   dtype: "auto",
   quantization: "none",
   kv_cache_dtype: "auto",

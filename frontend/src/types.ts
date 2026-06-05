@@ -55,6 +55,7 @@ export interface InferenceConfig {
   max_model_len: number;
   max_num_seqs: number;
   max_num_batched_tokens: number;
+  input_len: number;
   dtype: DType;
   quantization: Quantization;
   kv_cache_dtype: KVCacheDType;

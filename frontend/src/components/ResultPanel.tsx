@@ -107,9 +107,10 @@ function MetricCards({ r }: { r: EstimateResponse }) {
       value: r.ttft_ms.toFixed(0),
       unit: "ms",
       tip:
-        "= 2 × 激活参数量 × max-num-batched-tokens ÷ (总算力 × 算力利用率)\n" +
-        '即模型把整段问题读一遍(prefill)的时间，决定"第一个字"多久蹦出来。\n' +
-        "MoE 按激活参数算(每 token 只过 top-k 个专家)。",
+        "模型把整段问题读一遍(prefill)的时间，决定“第一个字”多久蹦出来。\n" +
+        "= (2 × 激活参数 × 输入长度 + 注意力 O(n²)) ÷ (算力 × 利用率) + 固定开销\n" +
+        "★ 随『输入长度(Prompt)』线性增长，长上下文还有 O(n²) 项。\n" +
+        "短输入(几百~2K)多卡下就是几十~几百 ms；长输入(8K~32K)会到秒级。",
     },
     {
       label: "TPOT 每字延迟",
