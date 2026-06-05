@@ -66,7 +66,6 @@ export interface InferenceConfig {
   intra_node: IntraNode;
   gpus_per_node: number;
   internode: InterNode;
-  async_scheduling: boolean;
   parallel_enabled: boolean;
   tp_size: number;
   pp_size: number;
@@ -98,9 +97,7 @@ export interface EstimateResponse {
   single_tps_low: number;
   single_tps_high: number;
   ttft_ms: number;
-  mean_ttft_ms: number;
   tpot_ms: number;
-  mean_tpot_ms: number;
   request_latency_ms: number;
   max_fit_seqs: number;
   bottleneck: "Compute Bound" | "Memory Bound" | "Bandwidth Bound";

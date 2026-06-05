@@ -107,7 +107,6 @@ class InferenceConfig(BaseModel):
     #   ib = InfiniBand/RoCE 高速网; ethernet = 普通以太网
     internode: InterNode = "ib"
     # --- 并行配置(可选; 不启用时 TP=总卡数, PP=DP=1) ---
-    async_scheduling: bool = False  # --async-scheduling
     parallel_enabled: bool = False
     tp_size: int = Field(1, ge=1, le=1024)  # --tensor-parallel-size
     pp_size: int = Field(1, ge=1, le=256)   # --pipeline-parallel-size
@@ -148,9 +147,7 @@ class EstimateResponse(BaseModel):
     single_tps_low: float
     single_tps_high: float
     ttft_ms: float
-    mean_ttft_ms: float
     tpot_ms: float
-    mean_tpot_ms: float
     request_latency_ms: float
     # 显存预算实际可容纳的并发序列数 (vLLM 会自动收敛到此值附近)
     max_fit_seqs: int
