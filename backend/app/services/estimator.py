@@ -374,15 +374,18 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     tpot_total = max(tpot_bw_total, decode_compute_t) + overhead_s
 
     # ---------------- PREFILL → TTFT ----------------
-    # TTFT 随输入(prompt)长度线性增长; 长上下文还有注意力 O(n²) 项。
+    # TTFT 是算力瓶颈, 同时随 ① 输入(prompt)长度 ② 并发(prefill 争抢算力) 增长。
     in_len = min(inf.input_len, inf.max_model_len)  # prompt 不超过上下文
     #   FFN/投影(线性): 2 × 激活参数 × prompt; MoE 按激活参数
     ffn_flops = 2 * active_params * in_len
     #   注意力(QK^T + AV): ~4 × prompt² × hidden × 层数, 长 prompt 时主导
     attn_flops = 4 * (in_len ** 2) * model.hidden_size * model.num_layers
     prefill_flops = ffn_flops + attn_flops
-    ttft = prefill_flops / (flops_replica * compute_util) * (1.0 + 0.10 * (pp - 1))
-    ttft += overhead_s  # prefill 也有逐层 kernel 启动/调度开销
+    # 单请求(低负载)prefill 计算时间
+    ttft_single = prefill_flops / (flops_replica * compute_util) * (1.0 + 0.10 * (pp - 1))
+    # 并发争抢: prefill 算力守恒, B 路并发时按 FIFO 平均排队 (B+1)/2 拉高 TTFT
+    prefill_contention = (eff_batch + 1) / 2.0
+    ttft = ttft_single * prefill_contention + overhead_s
 
     def _safe(x: float) -> float:
         return 1.0 / x if x > 0 else 0.0
