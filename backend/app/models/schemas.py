@@ -106,6 +106,7 @@ class InferenceConfig(BaseModel):
     #   nvlink = NVLink Switch/HCCS 等高速无损互联(几乎无损)
     #   ib = InfiniBand/RoCE 高速网; ethernet = 普通以太网
     internode: InterNode = "ib"
+    async_scheduling: bool = False  # --async-scheduling
     # --- 并行配置(可选; 不启用时 TP=总卡数, PP=DP=1) ---
     parallel_enabled: bool = False
     tp_size: int = Field(1, ge=1, le=1024)  # --tensor-parallel-size

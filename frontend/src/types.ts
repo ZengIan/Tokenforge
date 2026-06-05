@@ -66,6 +66,7 @@ export interface InferenceConfig {
   intra_node: IntraNode;
   gpus_per_node: number;
   internode: InterNode;
+  async_scheduling: boolean;
   parallel_enabled: boolean;
   tp_size: number;
   pp_size: number;

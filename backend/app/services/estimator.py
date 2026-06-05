@@ -101,6 +101,7 @@ OVERHEAD_PER_GPU = 1.2 * GB
 # Qwen3-Next 48层 MoE+线性 eager TP4 ≈ 真实 ~9 tok/s。
 PER_LAYER_OVERHEAD_MS = 0.60       # 每层每 token 基础开销(eager 口径)
 CUDA_GRAPH_FACTOR = 0.12           # 开启 CUDA Graph(未 enforce_eager)开销大幅降低
+ASYNC_SCHEDULING_FACTOR = 0.85   # --async-scheduling 异步调度：减少 CPU-GPU 同步开销
 MOE_OVERHEAD_MULT = 1.8            # MoE 的 expert gather/scatter 额外开销
 LINEAR_ATTN_OVERHEAD_MULT = 1.5    # 线性/混合注意力的逐 token 串行递归额外开销
 # 区间(相对中值): 乐观/保守 的开销系数
@@ -364,8 +365,10 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     # TP all-reduce(随 TP 规模)+ PP bubble
     tp_mult = 1.0 + 0.15 * (tp - 1) + 0.05 * (pp - 1)
     graph_mult = 1.0 if inf.enforce_eager else CUDA_GRAPH_FACTOR
+    async_mult = ASYNC_SCHEDULING_FACTOR if inf.async_scheduling else 1.0
     overhead_s = (
         model.num_layers * PER_LAYER_OVERHEAD_MS * arch_mult * tp_mult * graph_mult
+        * async_mult
         * internode_overhead_mult
     ) / 1000.0
 
