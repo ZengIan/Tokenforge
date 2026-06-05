@@ -239,44 +239,6 @@ def _estimate_active_params_b(cfg: dict, spec: ModelSpec, n_exp: int, top_k: int
     return total_active / 1e9
 
 
-def _total_params_b_from_config(cfg: dict, spec: ModelSpec) -> Optional[float]:
-    """按 config 精算总参数量(B)——MoE 必须用 n_routed_experts × moe_intermediate_size。
-
-    这是老工具算错的根源: 不看 moe_intermediate_size 会把每个专家当常规大 MLP,
-    256 专家乘出上万亿; 或干脆忽略只算 80B。正确公式按各仓库自己的 config 算,
-    量化压缩版(专家合并)config 会反映更小的架构, 因此和官方卡片标的参数量一致。
-    """
-    h = spec.hidden_size
-    L = spec.num_layers
-    if not (h and L):
-        return None
-    vocab = spec.vocab_size or 0
-
-    n_exp = int(
-        cfg.get("num_experts") or cfg.get("n_routed_experts")
-        or cfg.get("num_local_experts") or cfg.get("moe_num_experts") or 0
-    )
-    moe_inter = int(cfg.get("moe_intermediate_size") or 0)
-    dense_inter = int(cfg.get("intermediate_size") or 0)
-    # 前 k 层为 dense(DeepSeek/GLM 常见), 其余为 MoE
-    n_dense = int(cfg.get("first_k_dense_replace") or 0)
-    if n_exp <= 1 or not moe_inter:
-        return None  # 非 MoE 交给其它路径(name/storage)
-
-    # 共享专家
-    n_shared = int(cfg.get("n_shared_experts") or cfg.get("num_shared_experts") or 0)
-    shared_inter_cfg = int(cfg.get("shared_expert_intermediate_size") or 0)
-    shared_inter = shared_inter_cfg or (n_shared * moe_inter if n_shared else 0)
-
-    attn = 4 * h * h  # 注意力近似(对 MoE 模型占比很小)
-    ffn_dense = 3 * h * dense_inter if dense_inter else 3 * h * moe_inter
-    ffn_moe = n_exp * 3 * h * moe_inter + 3 * h * shared_inter
-
-    n_moe = max(0, L - n_dense)
-    total = vocab * h + n_dense * (attn + ffn_dense) + n_moe * (attn + ffn_moe)
-    return round(total / 1e9, 2)
-
-
 # 官网搜索用的接口在前,SDK 列表接口兜底
 _SEARCH_ENDPOINTS = (
     "https://modelscope.cn/api/v1/dolphin/models",
@@ -445,26 +407,13 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
             if wgb:
                 spec.weight_size_gb = wgb
 
-            # 处理参数量: 优先 ModelScope 官方(ReadMe) > MoE 精算公式 > 名字 > 权重反推
-            cfg_total = (
-                _total_params_b_from_config(cfg, spec)
-                if cfg and isinstance(cfg, dict) and not cfg_error
-                else None
-            )
+            # 处理参数量: 只认 ModelScope 官方值(ReadMe "X B in total"); 名字含 "XB" 兜底;
+            # 都没有则保持为 0, 由用户照 ModelScope 卡片手动填(不走公式推算, 避免误差)。
             if html_params:
                 spec.params_b = html_params
                 spec.params_accurate = True
-            elif cfg_total:
-                # MoE 按 n_routed_experts × moe_intermediate_size 精算(与官方卡片一致)
-                spec.params_b = cfg_total
-                spec.params_accurate = True
             elif name_params > 0:
                 spec.params_accurate = True
-            elif wgb:
-                inferred = params_from_storage(wgb * 1e9, model_id)
-                if inferred:
-                    spec.params_b = inferred
-                    spec.params_accurate = False
     except Exception:
         config_found = False
 
