@@ -107,20 +107,21 @@ function MetricCards({ r }: { r: EstimateResponse }) {
       value: r.ttft_ms.toFixed(0),
       unit: "ms",
       tip:
-        "= 2 × 激活参数量 × max-num-batched-tokens ÷ (总算力 × 算力利用率)\n" +
-        '即模型把整段问题读一遍(prefill)的时间，决定"第一个字"多久蹦出来。\n' +
-        "MoE 按激活参数算(每 token 只过 top-k 个专家)。",
+        "模型把整段问题读一遍(prefill)的时间，决定“第一个字”多久蹦出来。\n" +
+        "= (2 × 激活参数 × 输入长度 + 注意力 O(n²)) ÷ (算力 × 利用率) + 固定开销\n" +
+        "★ 随『输入长度(Prompt)』线性增长，长上下文还有 O(n²) 项。\n" +
+        "短输入(几百~2K)多卡下就是几十~几百 ms；长输入(8K~32K)会到秒级。",
     },
     {
       label: "TPOT 每字延迟",
       value: r.tpot_ms.toFixed(2),
       unit: "ms",
       tip:
-        "每生成 1 个 token 的耗时(中值)。\n" +
-        "= 权重读取时间 + 每 token 固定开销\n" +
-        "• 权重读取 = 激活权重字节 ÷ (总带宽 × 利用率)\n" +
-        "• 固定开销 = 层数 × 每层开销 ×(MoE/线性/TP/eager 系数)\n" +
-        "batch=1 时固定开销常是主导，所以单请求远低于带宽上限。",
+        "每生成 1 个 token 的耗时，显存带宽瓶颈。\n" +
+        "= (激活权重 + 本路 KV) ÷ (带宽 × 利用率) + 每 token 固定开销\n" +
+        "• KV 读取随上下文(输入长度)增长 → 长上下文 TPOT 逐步变大。\n" +
+        "• 固定开销 = 层数 × 每层开销 ×(MoE/线性/TP/eager 系数)。\n" +
+        "H100 实测一般 30~150 tok/s(TPOT 7~33ms)。",
     },
     {
       label: "总显存占用",

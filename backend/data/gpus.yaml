@@ -359,7 +359,7 @@ gpus:
     bw_gbs: 3200
     fp16_tflops: 781
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
     note: "华为官方规格: 128GB HBM3, BF16 781 TFLOPS, 双 die 封装, HCCS 互联。"
 
@@ -368,7 +368,7 @@ gpus:
     bw_gbs: 1600
     fp16_tflops: 376
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
     note: "FP16 算力约 313–320 TFLOPS,配备 ‌64GB HBM3e 显存‌，带宽 ‌1.2 TB/s。"
 
@@ -377,7 +377,7 @@ gpus:
     bw_gbs: 1600
     fp16_tflops: 376
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
     note: "FP16 算力约 300-376 TFLOPS‌，配备‌64GB 显存。"
 
@@ -386,7 +386,7 @@ gpus:
     bw_gbs: 800
     fp16_tflops: 280
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
     note: "推理卡，32GB HBM2e。"
 
@@ -395,7 +395,7 @@ gpus:
     bw_gbs: 1600
     fp16_tflops: 376
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
     note: "910B4 64GB 版本，规格同 910B3。"
 
@@ -404,7 +404,7 @@ gpus:
     bw_gbs: 1200
     fp16_tflops: 320
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
     note: "华为官方规格: 初代 910, 32GB HBM2, BF16 320 TFLOPS。"
 
@@ -425,7 +425,7 @@ gpus:
     bw_gbs: 1024
     fp16_tflops: 21.6
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # HCCS/xGMI 高速片间互联
     source: estimate
     note: "深算一号，32GB HBM2，xGMI2 184GB/s。基于实测博客，带宽/算力待官方确认。"
 
@@ -434,7 +434,7 @@ gpus:
     bw_gbs: 1024
     fp16_tflops: 17.4
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # HCCS/xGMI 高速片间互联
     source: estimate
     note: "Z100 低功耗版，32GB HBM2。基于实测博客，待官方确认。"
 
@@ -452,7 +452,7 @@ gpus:
     bw_gbs: 896
     fp16_tflops: 192
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # HCCS/xGMI 高速片间互联
     source: estimate
     note: "K100 AI增强版，64GB HBM2，加入Tensor Core。FP16 192T多来源交叉，带宽/算力待官方确认。"
   # ========================================================================
@@ -548,7 +548,7 @@ gpus:
     bw_gbs: 700
     fp16_tflops: 180
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # HCCS/xGMI 高速片间互联
     source: estimate
     note: "阿里平头哥真武810E，96GB HBM2e，ICN 700GB/s，不支持FP8，功耗400W。"
 

@@ -132,6 +132,13 @@ def _kv_heads(model: ModelSpec) -> int:
     return model.num_attention_heads
 
 
+def _parallel_sizes(inf: InferenceConfig, n_gpu: int) -> tuple[int, int, int]:
+    """返回 (tp, pp, dp)。未启用并行配置时 TP=总卡数, PP=DP=1。"""
+    if inf.parallel_enabled:
+        return max(1, inf.tp_size), max(1, inf.pp_size), max(1, inf.dp_size)
+    return max(1, n_gpu), 1, 1
+
+
 def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     model = req.model
     inf = req.inference
@@ -196,7 +203,12 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
         kv_per_seq = 2 * model.num_layers * kv_dim * seq * kv_b * model.kv_cache_factor / KV_UTIL
         kv_theory = kv_per_seq * active_seqs
 
-    non_kv = weights + act + overhead
+    # 并行切分: 权重/KV 按模型并行(TP×PP)分片; DP 复制整套权重
+    tp, pp, dp = _parallel_sizes(inf, n_gpu)
+    mp = max(1, tp * pp)
+    weights_cluster = weights * dp  # DP 复制 dp 份权重
+
+    non_kv = weights_cluster + act + overhead
     # 可用于 KV 的预算空间, 用于反推"实际可容纳并发"(vLLM 会按此截断并发)
     kv_limit = max(0.0, budget * GB - non_kv)
     max_kv_seqs = int(kv_limit / kv_per_seq) if kv_per_seq > 0 else 0
@@ -204,10 +216,11 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     # 显示口径用"真实需求"(KV 按 max_model_len×max_num_seqs 满算, 不截断),
     # 这样"总显存占用/利用率"才有意义(可 >100%, 表示放不下→会降并发到 max_kv_seqs)。
     total = non_kv + kv_theory
-    per_gpu = (weights + kv_theory) / n_gpu + act / n_gpu + overhead_per_gpu
+    # 单卡: 权重按模型并行 mp 分片(DP 不减单卡权重); KV/激活 摊到所有卡
+    per_gpu = weights / mp + (kv_theory + act) / n_gpu + overhead_per_gpu
 
     breakdown = MemoryBreakdown(
-        weights_gb=weights / GB,
+        weights_gb=weights_cluster / GB,
         kv_cache_gb=kv_theory / GB,
         kv_cache_limit_gb=kv_limit / GB,
         activations_gb=act / GB,
@@ -251,11 +264,41 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     compute_util = inf.compute_util if inf.compute_util is not None else VLLM_COMPUTE_UTIL
     mem_util = inf.mem_util if inf.mem_util is not None else VLLM_MEM_UTIL
 
+    # ---- 并行配置 + 合理性校验 ----
+    tp, pp, dp = _parallel_sizes(inf, n_gpu)
+    mp = max(1, tp * pp)
+    if inf.parallel_enabled:
+        world = tp * pp * dp
+        if world != n_gpu:
+            warnings.append(
+                f"⚠ TP×PP×DP = {tp}×{pp}×{dp} = {world} 与总卡数 {n_gpu} 不一致"
+                "(vLLM 要求三者乘积 = 总卡数),模型将无法启动。"
+            )
+        if model.num_attention_heads % tp != 0:
+            warnings.append(
+                f"⚠ 注意力头数 {model.num_attention_heads} 不能被 TP={tp} 整除,"
+                "张量并行无法切分,模型无法启动(需 num_attention_heads % TP == 0)。"
+            )
+        kvh = _kv_heads(model)
+        if kvh % tp != 0 and tp % kvh != 0:
+            warnings.append(
+                f"⚠ KV 头数 {kvh} 与 TP={tp} 不整除,GQA 切分可能失败。"
+            )
+        if model.num_layers % pp != 0:
+            warnings.append(
+                f"⚠ 层数 {model.num_layers} 不能被 PP={pp} 整除,流水线切分不均,可能无法启动。"
+            )
+        if inf.max_num_batched_tokens < pp:
+            warnings.append(
+                f"⚠ max-num-batched-tokens({inf.max_num_batched_tokens}) 小于 PP={pp},"
+                "流水线每个 micro-batch 不足 1 token,无法启动。"
+            )
+
     # ---- 互联通信损耗 ----
     internode_overhead_mult = 1.0
-    if n_gpu > GPUS_PER_NODE:
-        # 多机/跨机部署: 损耗取决于跨机互联类型
-        n_nodes = math.ceil(n_gpu / GPUS_PER_NODE)
+    if n_gpu > inf.gpus_per_node:
+        # 多机/跨机: 损耗取决于跨机互联类型
+        n_nodes = math.ceil(n_gpu / inf.gpus_per_node)
         f = INTERNODE_COMPUTE_FACTOR.get(inf.internode, 0.90)
         compute_util *= f
         internode_overhead_mult = INTERNODE_OVERHEAD_MULT.get(inf.internode, 1.4)
@@ -269,10 +312,17 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
             warnings.append(
                 f"{n_nodes} 机跨机部署: 已按高速无损互联(NVLink Switch/HCCS)计,跨机通信几乎无损耗。"
             )
-    elif n_gpu > 1 and not all_nvlink:
-        # 单机但无机内高速互联(PCIe 等)
-        compute_util *= 0.85
-        warnings.append("机内无高速互联(NVLink/HCCS),TP 通信开销已下调效率 ~15%。")
+    elif n_gpu > 1:
+        # 单机多卡: 机内互联 (auto 按卡库 nvlink, 否则按用户选择)
+        has_highspeed = (
+            all_nvlink if inf.intra_node == "auto" else inf.intra_node == "highspeed"
+        )
+        if not has_highspeed:
+            compute_util *= 0.85
+            warnings.append(
+                "机内按纯 PCIe(无 NVLink/HCCS)计,TP 通信开销已下调效率 ~15%;"
+                "若卡间有 HCCS/NVLink 链路,请把'机内互联'选为'高速'。"
+            )
 
     batch = inf.max_num_seqs  # continuous batching: in-flight sequences
 
@@ -280,16 +330,21 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     active_params = (model.active_params_b or model.params_b) * 1e9
     active_ratio = active_params / params if params > 0 else 1.0
 
-    # ---------------- PREFILL (compute bound) ----------------
-    prefill_flops = 2 * active_params * inf.max_num_batched_tokens
-    ttft = prefill_flops / (flops_total * compute_util)  # seconds
+    # 单请求只用其所在副本的 模型并行(mp=TP×PP) 组算力/带宽; DP 副本并行服务不同请求
+    mp_frac = mp / n_gpu  # 一个副本占总卡数的比例
+    bw_replica = bw_total * mp_frac    # 单副本聚合带宽
+    flops_replica = flops_total * mp_frac
 
     # ---------------- DECODE 屋顶线 ----------------
-    # 每步只读激活权重(KV 读取量随上下文变化, 这里并入下方固定开销, 不重复计)。
-    weight_read_bytes = mem.weights_gb * GB * active_ratio
-    tpot_bw = weight_read_bytes / (bw_total * mem_util)  # 带宽时间
+    # 每步搬运: 激活权重(整批共享一次) + 每条序列各自的 KV(随上下文长度增长)。
+    weight_read_bytes = mem.weights_gb * GB * active_ratio / max(1, dp)  # 单副本权重
+    # 每路 KV 读取量按"实际序列长度"(≈输入长度)缩放; mem.kv_cache_gb 是 max-model-len 满算口径
+    in_len = min(inf.input_len, inf.max_model_len)
+    kv_per_seq = (mem.kv_cache_gb * GB / max(1, batch)) * (in_len / max(1, inf.max_model_len))
+    # 单请求: 权重 + 自己 1 路 KV; 总吞吐: 权重(共享) + 全 batch 的 KV
+    tpot_bw_single = (weight_read_bytes + kv_per_seq) / (bw_replica * mem_util)
+    tpot_bw_total = (weight_read_bytes + kv_per_seq * batch) / (bw_total * mem_util)
     decode_compute_t = (2 * active_params * batch) / (flops_total * compute_util)
-    tpot_roof = max(tpot_bw, decode_compute_t)  # 理论屋顶线(每步)
 
     # ---------------- 每 token 固定开销(现实地板) ----------------
     arch_mult = 1.0
@@ -297,31 +352,43 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         arch_mult *= MOE_OVERHEAD_MULT
     if model.is_linear_attn:
         arch_mult *= LINEAR_ATTN_OVERHEAD_MULT
-    tp_mult = 1.0 + 0.15 * (n_gpu - 1)
+    # TP all-reduce(随 TP 规模)+ PP bubble
+    tp_mult = 1.0 + 0.15 * (tp - 1) + 0.05 * (pp - 1)
     graph_mult = 1.0 if inf.enforce_eager else CUDA_GRAPH_FACTOR
     overhead_s = (
         model.num_layers * PER_LAYER_OVERHEAD_MS * arch_mult * tp_mult * graph_mult
         * internode_overhead_mult
     ) / 1000.0
 
-    # TPOT = 屋顶线 + 固定开销; 区间由开销不确定性给出
-    tpot_mid = tpot_roof + overhead_s
-    tpot_fast = tpot_roof + overhead_s * OVERHEAD_FAST
-    tpot_slow = tpot_roof + overhead_s * OVERHEAD_SLOW
-    tpot_eff = tpot_mid
+    # 单请求 TPOT(副本带宽) 与 总吞吐 TPOT(聚合带宽)
+    tpot_single = max(tpot_bw_single, decode_compute_t / max(1, batch)) + overhead_s
+    tpot_total = max(tpot_bw_total, decode_compute_t) + overhead_s
+
+    # ---------------- PREFILL → TTFT ----------------
+    # TTFT 随输入(prompt)长度线性增长; 长上下文还有注意力 O(n²) 项。
+    in_len = min(inf.input_len, inf.max_model_len)  # prompt 不超过上下文
+    #   FFN/投影(线性): 2 × 激活参数 × prompt; MoE 按激活参数
+    ffn_flops = 2 * active_params * in_len
+    #   注意力(QK^T + AV): ~4 × prompt² × hidden × 层数, 长 prompt 时主导
+    attn_flops = 4 * (in_len ** 2) * model.hidden_size * model.num_layers
+    prefill_flops = ffn_flops + attn_flops
+    ttft = prefill_flops / (flops_replica * compute_util) * (1.0 + 0.10 * (pp - 1))
+    ttft += overhead_s  # prefill 也有逐层 kernel 启动/调度开销
 
     def _safe(x: float) -> float:
         return 1.0 / x if x > 0 else 0.0
 
-    single_tps = _safe(tpot_mid)
-    single_tps_high = _safe(tpot_fast)
-    single_tps_low = _safe(tpot_slow)
-    tps = batch * single_tps
-    tps_high = batch * single_tps_high
-    tps_low = batch * single_tps_low
-    request_latency = ttft + tpot_mid  # 首字 + 单 token
+    # 区间: 固定开销不确定性 (单请求口径)
+    single_tps = _safe(tpot_single)
+    single_tps_high = _safe(tpot_bw_single + overhead_s * OVERHEAD_FAST)
+    single_tps_low = _safe(tpot_bw_single + overhead_s * OVERHEAD_SLOW)
+    tps = batch * _safe(tpot_total)
+    tps_high = batch * _safe(tpot_bw_total + overhead_s * OVERHEAD_FAST)
+    tps_low = batch * _safe(tpot_bw_total + overhead_s * OVERHEAD_SLOW)
+    tpot_eff = tpot_single
+    request_latency = ttft + tpot_single  # 首字 + 单 token
     # 供瓶颈分析判断带宽 vs 算力
-    tpot = tpot_bw
+    tpot = tpot_bw_total
 
     # --gpu-memory-utilization 限定可用显存预算
     per_gpu_capacity = (total_mem_gb / n_gpu) * inf.gpu_memory_utilization
@@ -344,7 +411,7 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         bottleneck=bottleneck,
         tpot_bw=tpot,
         decode_compute_t=decode_compute_t,
-        tpot_roof=tpot_roof,
+        tpot_roof=tpot_bw_single,
         overhead_s=overhead_s,
         single_tps=single_tps,
     )
