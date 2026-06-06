@@ -14,7 +14,7 @@ Quantization = Literal[
 # --kv-cache-dtype: KV 缓存精度
 KVCacheDType = Literal["auto", "fp8", "fp8_e5m2", "fp8_e4m3", "int8"]
 # 跨机(多机)互联类型: 卡数 > 单机上限时生效
-InterNode = Literal["nvlink", "ib", "ethernet"]
+InterNode = Literal["nvlink", "ib", "roce", "ethernet"]
 
 
 class GpuSpec(BaseModel):
@@ -104,8 +104,8 @@ class InferenceConfig(BaseModel):
     gpus_per_node: int = Field(8, ge=1, le=64)
     # 跨机互联(仅卡数 > gpus_per_node 的多机部署生效):
     #   nvlink = NVLink Switch/HCCS 等高速无损互联(几乎无损)
-    #   ib = InfiniBand/RoCE 高速网; ethernet = 普通以太网
-    internode: InterNode = "ib"
+    #   ib = InfiniBand IB 网络; roce = RoCE 高速网络; ethernet = 普通以太网
+    internode: InterNode = "roce"
     async_scheduling: bool = False  # --async-scheduling
     # --- 并行配置(可选; 不启用时 TP=总卡数, PP=DP=1) ---
     parallel_enabled: bool = False

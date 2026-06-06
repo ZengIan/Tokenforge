@@ -152,7 +152,7 @@ const JISUAN_ROWS: [string, string, string][] = [
   ["单请求 TPS", "保守区间 = 1 ÷ 单 token 耗时\n单 token 耗时 = 激活权重读取时间 + 每 token 固定开销\n• 权重读取 = 激活权重字节 ÷ (聚合带宽 × 带宽利用率)\n• 固定开销 = 层数 × 每层开销 × 系数（MoE/线性/TP/eager）\n区间已按真实部署数据标定", "保守下限 = 1 ÷ (9.15 + 固定开销惩罚) ≈ 71\n上限 = 1 ÷ 9.15 × batch 收益 ≈ 140"],
   ["TTFT", "TTFT = 单请求prefill × 并发争抢(并发+1)/2 + 固定开销\n单请求prefill = (2×激活参数×输入长度 + 注意力O(n²)) ÷ (算力×利用率)\nprefill 是算力瓶颈：并发越高、prompt 越长，TTFT 越大", "并发1/2K≈几十ms\n并发8/2K≈数百ms\n并发8/32K≈数秒(此为平均, P99更高)"],
   ["TPOT", "TPOT = (激活权重 + 本路 KV) ÷ (带宽 × 利用率) + 固定开销\nKV 读取随上下文增长 → 长上下文 TPOT 变大", "激活权重 ≈ 10.99B × 1字节 = 10.99 GB\n本路 KV / 并发 ≈ 160GB / 8 = 20 GB/路\n(10.99 + 20) ÷ (3200 × 80%) ≈ 12 ms\n+ 固定开销 ≈ 4-5 ms → TPOT ≈ 16-17 ms"],
-  ["跨机互联损耗", ">8 卡视为多机部署：\n• 高速无损（NVLink Switch/HCCS等）：≈ 无损耗\n• InfiniBand/RoCE：约 -10%\n• 普通以太网：约 -25%，且每 token 跨机延迟更高\n单机内无 NVLink（纯 PCIe）：约 -15%", ""],
+  ["跨机互联损耗", "多机部署损耗分两路：\n• prefill(通信量大难重叠)：叠算力折扣\n• decode(通信小)：仅延迟放大，不叠算力折扣\n\n各互联类型：\n• NVLink Switch 无损网络：prefill 无折扣 / 延迟 1.0×\n• InfiniBand IB 网络：prefill -5% / 延迟 1.2×\n• RoCE 高速网络：prefill -10% / 延迟 1.5×\n• 25G 普通以太网：prefill -20% / 延迟 2.5×\n单机内无 NVLink（纯 PCIe）：约 -15%", ""],
   ["量化类型", "• fp8/w8a8 = 8 bit（1 字节/参数）\n• awq/gptq/w4a8/w4a16 = 4 bit（0.5 字节/参数）\n• none = 按 dtype（BF16/FP16）\n量化越激进越省显存，但精度损失越大", ""],
   ["体感评级阈值", "✅ 流畅：TPS ≥ 30 且 TTFT ≤ 2s\n✅ 良好：TPS ≥ 20 且 TTFT ≤ 5s\n🟢 可接受：TPS ≥ 15 且 TTFT ≤ 10s\n🟡 偏慢：TPS ≥ 10 且 TTFT ≤ 20s\n🟠 仅演示:TPS ≥ 5 或 TTFT ≤ 40s\n🔴 离线/批处理：其他（TTFT 过长，仅适合离线任务）", ""],
   ["说明", "估算为理论近似值，实际推理性能以实测为准；\nsource=estimate 的卡型算力/带宽为占位值，性能仅供参考", ""]

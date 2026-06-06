@@ -50,7 +50,7 @@ export type Quantization =
   | "w4a8"
   | "w4a16";
 export type KVCacheDType = "auto" | "fp8" | "fp8_e5m2" | "fp8_e4m3" | "int8";
-export type InterNode = "nvlink" | "ib" | "ethernet";
+export type InterNode = "nvlink" | "ib" | "roce" | "ethernet";
 export type IntraNode = "auto" | "pcie";
 
 export interface InferenceConfig {

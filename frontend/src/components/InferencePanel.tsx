@@ -263,17 +263,20 @@ export function InferencePanel() {
             label={`跨机互联（${Math.ceil(nGpu / Math.max(1, i.gpus_per_node))} 机 ${nGpu} 卡）`}
             flag="多机部署"
             tip={
-              "卡数超过单机卡数 = 多机部署，跨机通信比机内 NVLink/HCCS 慢，会拖低算力效率。\n\n" +
-              "• 高速无损(NVLink Switch/HCCS)：跨机也是高速互联，几乎无损耗。\n" +
-              "• InfiniBand/RoCE：常规高速网，约 10% 损耗。\n" +
-              "• 普通以太网：约 25% 损耗，且每 token 跨机延迟更高。"
+              "卡数超过单机卡数 = 多机部署，跨机通信会拖低算力效率。\n\n" +
+              "• NVLink Switch：机间 GPU 直连，几乎无损耗。\n" +
+              "• InfiniBand IB：原生 RDMA，prefill ~5%，延迟 1.2×。\n" +
+              "• RoCE 高速网：以太网 RDMA，prefill ~10%，延迟 1.5×。\n" +
+              "• 25G 普通以太网：prefill ~20%，延迟 2.5×。\n\n" +
+              "注：decode 阶段跨机损耗全走延迟放大，不叠算力折扣。"
             }
             value={i.internode}
-            options={["nvlink", "ib", "ethernet"]}
+            options={["nvlink", "ib", "roce", "ethernet"]}
             optionLabels={{
-              nvlink: "高速无损 (NVLink Switch/HCCS等)",
-              ib: "InfiniBand / RoCE 高速网",
-              ethernet: "普通以太网",
+              nvlink: "NVLink Switch 无损网络",
+              ib: "InfiniBand IB 网络",
+              roce: "RoCE 高速网络",
+              ethernet: "25G 普通以太网",
             }}
             onChange={(v) => setInference({ internode: v as InterNode })}
           />

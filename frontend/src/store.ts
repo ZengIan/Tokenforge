@@ -34,7 +34,7 @@ export const DEFAULT_INFERENCE: InferenceConfig = {
   enforce_eager: false,
   intra_node: "auto",
   gpus_per_node: 8,
-  internode: "ib",
+  internode: "roce",
   parallel_enabled: false,
   tp_size: 1,
   pp_size: 1,
