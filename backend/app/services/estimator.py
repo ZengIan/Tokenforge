@@ -72,21 +72,27 @@ VLLM_MEM_UTIL = 0.80
 
 # 单机最多卡数(超过即视为多机/跨机部署)
 GPUS_PER_NODE = 8
-# 跨机互联对 prefill 算力利用率的折扣(prefill 通信量大、不易与计算重叠)
-# decode 阶段不叠算力折扣，跨机损耗全走"延迟放大"列(避免同一笔通信开销算两遍)
-INTERNODE_PREFILL_FACTOR = {
-    "nvlink": 1.00,   # NVLink Switch 无损
-    "ib": 0.95,       # InfiniBand 机间 -> ~5% 损耗
-    "roce": 0.90,     # RoCE 机间 -> ~10% 损耗
-    "ethernet": 0.80, # 25G 以太网 -> ~20% 损耗
-}
 # 跨机互联对每 token 延迟的放大(decode 的跨机损耗主要在此，TPOT 直接乘)
+# prefill/TTFT 的跨机损耗不走这里,而由 TTFT 物理模型的 TP/PP 通信项按链路带宽显式计时。
 INTERNODE_OVERHEAD_MULT = {
     "nvlink": 1.0,
     "ib": 1.2,
     "roce": 1.5,
     "ethernet": 2.5,
 }
+
+# ---- prefill 通信(TTFT 用): all-reduce 有效带宽(GB/s) 与单次延迟(s) ----
+# TTFT 用物理加法模型: ttft = (计算 + TP通信 + PP) × 争抢 + 固定开销。
+# TP all-reduce / PP 激活传输按链路有效带宽&延迟显式计时,跨机走慢链路 → 跨机必然更慢,
+# 高速无损(NVLink Switch/HCCS)链路带宽高 → 跨机≈单机。
+LINK_BW_INTRA_HS = 150.0    # 机内 NVLink/HCCS 有效 all-reduce 带宽
+LINK_BW_INTRA_PCIE = 25.0   # 机内纯 PCIe
+# 跨机链路有效带宽: 4 档(roce 介于 ib 与 ethernet 之间)
+INTERNODE_LINK_BW = {"nvlink": 150.0, "ib": 50.0, "roce": 25.0, "ethernet": 8.0}
+LINK_LAT_INTRA = 5e-6
+INTERNODE_LINK_LAT = {"nvlink": 1e-5, "ib": 2e-5, "roce": 4e-5, "ethernet": 1e-4}
+ACT_BYTES_COMM = 2          # 激活通信走 BF16
+TTFT_FIXED_S = 0.012        # 固定调度/launch/采样 ~12ms
 
 # PagedAttention KV-cache packing efficiency
 KV_UTIL = 0.90
@@ -309,12 +315,12 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
             )
 
     # ---- 互联通信损耗 ----
+    # decode 跨机损耗走"每 token 延迟放大"(internode_overhead_mult, 进 overhead_s);
+    # prefill/TTFT 的跨机损耗由 TTFT 物理模型里的 TP all-reduce / PP 通信项显式计时。
     internode_overhead_mult = 1.0
-    internode_prefill_factor = 1.0  # 仅 prefill 用算力折扣(跨机通信量大、难重叠)
     if n_gpu > inf.gpus_per_node:
         # 多机/跨机: 损耗取决于跨机互联类型
         n_nodes = math.ceil(n_gpu / inf.gpus_per_node)
-        internode_prefill_factor = INTERNODE_PREFILL_FACTOR.get(inf.internode, 0.90)
         internode_overhead_mult = INTERNODE_OVERHEAD_MULT.get(inf.internode, 1.5)
     elif n_gpu > 1:
         # 单机多卡: 机内互联 (auto 按卡库 nvlink, pcie 强制纯 PCIe)
@@ -333,7 +339,6 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     # 单请求只用其所在副本的 模型并行(mp=TP×PP) 组算力/带宽; DP 副本并行服务不同请求
     mp_frac = mp / n_gpu  # 一个副本占总卡数的比例
     bw_replica = bw_total * mp_frac    # 单副本聚合带宽
-    flops_replica = flops_total * mp_frac
 
     # ---------------- DECODE 屋顶线 ----------------
     # 每步搬运: 激活权重(整批共享一次) + 每条序列各自的 KV(随上下文长度增长)。
@@ -389,18 +394,44 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         # 标准全注意力: 所有层 O(n²)
         attn_flops = 4 * (in_len ** 2) * model.hidden_size * model.num_layers
     prefill_flops = ffn_flops + attn_flops
-    # 单请求(低负载)prefill 计算时间
-    # MoE prefill: grouped-GEMM 利用率远低于稠密大 GEMM
-    # 跨机 prefill 折扣: 通信量大不易重叠, 折扣只叠 prefill, decode 仅走延迟放大
-    if model.is_moe:
-        prefill_compute_util = MOE_PREFILL_EFFICIENCY * internode_prefill_factor
-    else:
-        prefill_compute_util = compute_util * internode_prefill_factor
-    ttft_single = prefill_flops / (flops_replica * prefill_compute_util) * (1.0 + 0.10 * (pp - 1))
-    # 并发争抢: continuous batching 下 prefill 不会完全串行排队
-    # 真实行为是分时复用算力，争抢随并发增长但增幅递减，用 sqrt 近似
+
+    # ---- TTFT 物理加法模型: ttft = (计算 + TP通信 + PP) × 争抢 + 固定开销 ----
+    # ① 计算项: 只有 TP 能并行单请求 prefill 计算(PP 串行、DP 与单请求无关) → 仅除以 TP。
+    #    MoE prefill 走 grouped-GEMM, 有效利用率远低于稠密大 GEMM。
+    per_card_flops = flops_total / n_gpu
+    prefill_compute_util = MOE_PREFILL_EFFICIENCY if model.is_moe else compute_util
+    t_compute = prefill_flops / (per_card_flops * tp * prefill_compute_util)
+    if inf.enforce_eager:
+        t_compute *= 1.1  # 关 CUDA Graph 对 prefill 影响小(主要打 TPOT)
+
+    # ② TP all-reduce 通信(随 TP 规模; TP 组跨机时走机间慢链路 → 跨机必然更慢,
+    #    高速无损 NVLink Switch/HCCS 链路带宽高 → 跨机≈单机)。
+    msg_bytes = in_len * model.hidden_size * ACT_BYTES_COMM  # 每次 all-reduce 张量
+    t_tp_comm = 0.0
+    if tp > 1:
+        if tp > inf.gpus_per_node:  # TP 组跨节点 → 走机间链路
+            bw = INTERNODE_LINK_BW.get(inf.internode, 50.0)
+            lat = INTERNODE_LINK_LAT.get(inf.internode, 2e-5)
+        else:  # 机内
+            hs = all_nvlink if inf.intra_node == "auto" else inf.intra_node != "pcie"
+            bw = LINK_BW_INTRA_HS if hs else LINK_BW_INTRA_PCIE
+            lat = LINK_LAT_INTRA
+        # 每层 2 次 all-reduce(attn + FFN), ring all-reduce 通信量 2(tp-1)/tp × 张量
+        t_tp_comm = model.num_layers * 2 * (
+            2 * (tp - 1) / tp * msg_bytes / (bw * 1e9) + lat
+        )
+
+    # ③ PP 项: 级间传激活 + 气泡, 对单请求 TTFT 只增不减(PP 不能加速单请求 prefill)。
+    t_pp = 0.0
+    if pp > 1:
+        cross = n_gpu > inf.gpus_per_node
+        bw_pp = INTERNODE_LINK_BW.get(inf.internode, 50.0) if cross else LINK_BW_INTRA_HS
+        lat_pp = INTERNODE_LINK_LAT.get(inf.internode, 2e-5) if cross else LINK_LAT_INTRA
+        t_pp = (pp - 1) * (msg_bytes / (bw_pp * 1e9) + lat_pp)
+
+    # 并发争抢: continuous batching 下 prefill 分时复用算力,争抢随并发增长但增幅递减(sqrt 近似)。
     prefill_contention = 1.0 + 0.5 * (eff_batch - 1) / max(1, eff_batch ** 0.5)
-    ttft = ttft_single * prefill_contention + overhead_s
+    ttft = (t_compute + t_tp_comm + t_pp) * prefill_contention + TTFT_FIXED_S
 
     def _safe(x: float) -> float:
         return 1.0 / x if x > 0 else 0.0

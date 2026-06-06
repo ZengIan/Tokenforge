@@ -103,6 +103,53 @@ def test_mla_kv_far_smaller_than_mha():
     assert mla.max_fit_seqs > mha.max_fit_seqs
 
 
+def _ttft_req(card, n, gpus_per_node, **inf_kw):
+    inf = dict(
+        max_model_len=204800, max_num_seqs=1, max_num_batched_tokens=8192,
+        input_len=8192, gpus_per_node=gpus_per_node,
+    )
+    inf.update(inf_kw)
+    return EstimateRequest(
+        model=ModelSpec(model_id="moe", params_b=210, hidden_size=6144, num_layers=78,
+                        num_attention_heads=64, num_key_value_heads=1, vocab_size=152064,
+                        is_moe=True, active_params_b=39.23, attn_type="MLA", mla_kv_dim=576),
+        gpus=[GpuGroup(spec=GPUS[card], count=n)],
+        inference=InferenceConfig(**inf),
+    )
+
+
+def test_ttft_crossmachine_slower_with_ib():
+    """同 TP, TP 组跨机走 IB/以太(有损)时必须比单机慢。"""
+    card = "NVIDIA H100 SXM (80G)"
+    single = estimate(_ttft_req(card, 16, 16, internode="ib")).ttft_ms
+    cross = estimate(_ttft_req(card, 16, 8, internode="ib")).ttft_ms
+    assert cross > single * 1.3
+
+
+def test_ttft_crossmachine_nvlink_lossless():
+    """跨机若是 NVLink Switch/HCCS(高速无损), TTFT 应≈单机(几乎无跨机损耗)。"""
+    card = "NVIDIA H100 SXM (80G)"
+    single = estimate(_ttft_req(card, 16, 16, internode="nvlink")).ttft_ms
+    cross = estimate(_ttft_req(card, 16, 8, internode="nvlink")).ttft_ms
+    assert cross < single * 1.1  # 无损跨机, 差异 <10%
+
+
+def test_ttft_tp_reduces_intra_node():
+    """机内增加 TP(卡数), TTFT 应下降(TP 并行 prefill 计算)。"""
+    card = "NVIDIA H100 SXM (80G)"
+    assert estimate(_ttft_req(card, 16, 16)).ttft_ms < estimate(_ttft_req(card, 4, 16)).ttft_ms
+
+
+def test_ttft_pp_dp_not_faster_than_tp():
+    """固定总卡数, PP/DP 不应比纯 TP 更快(只有 TP 能并行单请求 prefill)。"""
+    card = "NVIDIA H100 SXM (80G)"
+    tp16 = estimate(_ttft_req(card, 16, 16, parallel_enabled=True, tp_size=16, pp_size=1, dp_size=1)).ttft_ms
+    tp8pp2 = estimate(_ttft_req(card, 16, 16, parallel_enabled=True, tp_size=8, pp_size=2, dp_size=1)).ttft_ms
+    tp8dp2 = estimate(_ttft_req(card, 16, 16, parallel_enabled=True, tp_size=8, pp_size=1, dp_size=2)).ttft_ms
+    assert tp8pp2 >= tp16 - 1e-6
+    assert tp8dp2 >= tp16 - 1e-6
+
+
 def test_max_fit_seqs_reported():
     # 庞大并发应触发 max_fit_seqs < max_num_seqs
     r = estimate(_req("NVIDIA A100 SXM (80G)", 8, max_num_seqs=2048, max_model_len=131072))
