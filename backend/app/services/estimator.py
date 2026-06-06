@@ -310,25 +310,11 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         f = INTERNODE_COMPUTE_FACTOR.get(inf.internode, 0.90)
         compute_util *= f
         internode_overhead_mult = INTERNODE_OVERHEAD_MULT.get(inf.internode, 1.4)
-        if f < 1.0:
-            warnings.append(
-                f"{n_nodes} 机跨机部署({inf.internode}): 跨机通信已下调算力效率 "
-                f"{int(round((1 - f) * 100))}%。若为 NVLink Switch/HCCS/MLU-Link 等高速无损互联,"
-                "可将'跨机互联'选为'高速无损'消除此损耗。"
-            )
-        else:
-            warnings.append(
-                f"{n_nodes} 机跨机部署: 已按高速无损互联(NVLink Switch/HCCS/MLU-Link 等)计,跨机通信几乎无损耗。"
-            )
     elif n_gpu > 1:
         # 单机多卡: 机内互联 (auto 按卡库 nvlink, pcie 强制纯 PCIe)
         has_highspeed = all_nvlink if inf.intra_node == "auto" else False
         if not has_highspeed:
             compute_util *= 0.85
-            warnings.append(
-                "机内按纯 PCIe(无高速互联)计,TP 通信开销已下调效率 ~15%;"
-                "若卡间有 NVLink/HCCS/MLU-Link 等高速链路,请把'机内互联'选为'高速'。"
-            )
 
     batch = inf.max_num_seqs  # continuous batching: in-flight sequences
     # 实际同时在跑的路数: 受 KV 显存限制(放不下的请求会排队, 不计入瞬时吞吐)

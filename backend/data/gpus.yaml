@@ -570,7 +570,7 @@ gpus:
     fp16_tflops: 120        # 基础版峰值算力(单卡)
     fp8_tflops: 0           # 架构不支持原生 FP8
     nvlink: true            # ICN 片间高速互联, 带宽 700GB/s
-    source: estimate
+    source: datasheet
     note: "PPU ZW810E基础版，96GB HBM2e(Hynix)@1800MHz，ICN片间互联700GB/s，PCIe 5.0×16，功耗400W，不支持FP8。⚠ 显存带宽(4000GB/s)为临时估值，上线前务必实测校准！"
 
 # ============================================================================
