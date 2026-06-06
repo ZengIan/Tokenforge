@@ -250,7 +250,7 @@ export function ModelPanel() {
             <option value="MHA">MHA（全头KV）</option>
             <option value="GQA">GQA（分组）</option>
             <option value="MQA">MQA（单KV头）</option>
-            <option value="MLA">MLA（DeepSeek/GLM 低秩）</option>
+            <option value="MLA">MLA（DeepSeek/GLM/Kimi 低秩）</option>
           </select>
         </label>
         {model.attn_type === "MLA" ? (

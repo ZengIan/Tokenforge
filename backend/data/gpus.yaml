@@ -425,7 +425,7 @@ gpus:
     bw_gbs: 1024
     fp16_tflops: 21.6
     fp8_tflops: 0
-    nvlink: true            # HCCS/xGMI 高速片间互联
+    nvlink: true            # xGMI2 高速片间互联 184GB/s
     source: estimate
     note: "深算一号，32GB HBM2，xGMI2 184GB/s。基于实测博客，带宽/算力待官方确认。"
 
@@ -434,9 +434,9 @@ gpus:
     bw_gbs: 1024
     fp16_tflops: 17.4
     fp8_tflops: 0
-    nvlink: true            # HCCS/xGMI 高速片间互联
+    nvlink: true            # xGMI2 高速片间互联
     source: estimate
-    note: "Z100 低功耗版，32GB HBM2。基于实测博客，待官方确认。"
+    note: "Z100 低功耗版，32GB HBM2，xGMI2。基于实测博客，待官方确认。"
 
   "海光 DCU K100 (32G)":
     mem_gb: 32
@@ -445,16 +445,37 @@ gpus:
     fp8_tflops: 0
     nvlink: false
     source: estimate
-    note: "32GB HBM2 版本，通用计算。基于实测博客，待官方确认。"
+    note: "32GB HBM2 版本，通用计算，无 xGMI 互联。基于实测博客，待官方确认。"
 
   "海光 DCU K100-AI (64G)":
     mem_gb: 64
     bw_gbs: 896
     fp16_tflops: 192
     fp8_tflops: 0
-    nvlink: true            # HCCS/xGMI 高速片间互联
+    nvlink: true            # xGMI 高速片间互联
     source: estimate
-    note: "K100 AI增强版，64GB HBM2，加入Tensor Core。FP16 192T多来源交叉，带宽/算力待官方确认。"
+    note: "K100 AI增强版，64GB HBM2，加入Tensor Core，xGMI互联。FP16 192T多来源交叉，带宽/算力待官方确认。"
+
+  # ========================================================================
+  # 沐曦 MetaX (estimate, 算力已校准)
+  # ========================================================================
+  "沐曦 曦云C500 OAM (64G)":
+    mem_gb: 64
+    bw_gbs: 1800
+    fp16_tflops: 280
+    fp8_tflops: 0
+    nvlink: true            # MetaXLink 高速片间互联, 单机8卡全互联
+    source: datasheet
+    note: "沐曦曦云C500 OAM版，64GB HBM2e，FP16/BF16 280T，INT8 560 TOPS，MetaXLink 8卡全互联。"
+
+  "沐曦 曦云C500 PCIe (64G)":
+    mem_gb: 64
+    bw_gbs: 1800
+    fp16_tflops: 240
+    fp8_tflops: 0
+    nvlink: true            # MetaXLink 高速片间互联, 2卡/4卡全互联
+    source: datasheet
+    note: "沐曦曦云C500 PCIe版，64GB HBM2e，FP16/BF16 240T，INT8 480 TOPS，MetaXLink 2/4卡互联。"
   # ========================================================================
   # 天数智芯 (estimate, 算力已校准)
   # ========================================================================
@@ -463,7 +484,7 @@ gpus:
     bw_gbs: 800            # HBM2 理论估算，官方未明确
     fp16_tflops: 147
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # BI-Link 片间互联 64GB/s
     source: datasheet
     note: "天垓100，官方规格：32GB HBM2，FP16 147T(含TCU)，INT8 295 TOPS，BI-Link 64GB/s。"
 
@@ -501,9 +522,9 @@ gpus:
     bw_gbs: 2048
     fp16_tflops: 256
     fp8_tflops: 0          # 软件模拟，非原生，按约定填 0
-    nvlink: false
+    nvlink: true            # XCCL 高速片间互联 (卡间互联带宽比 PCIe 提升 8 倍)
     source: datasheet   
-    note: "百度第三代 P800，96GB HBM3，FP16 256T。FP8 为软件模拟，非原生硬件支持。"
+    note: "百度第三代 P800，96GB HBM3，FP16 256T，XCCL高速互联。FP8 为软件模拟，非原生硬件支持。"
 
   # ========================================================================
   # 寒武纪 Cambricon (datasheet/estimate)
@@ -529,7 +550,7 @@ gpus:
     bw_gbs: 614
     fp16_tflops: 96
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # MLU-Link 多芯互联, 200GB/s
     source: datasheet
 
   "寒武纪 思元590 (96G)":
@@ -537,20 +558,20 @@ gpus:
     bw_gbs: 1800
     fp16_tflops: 256
     fp8_tflops: 0
-    nvlink: false
+    nvlink: true            # MLU-Link 4.0 多芯互联
     source: estimate
 
   # ========================================================================
-  # PPU (estimate, 完全占位)
+  # PPU (datasheet, 已校准)
   # ========================================================================
   "平头哥PPU ZW810E (96G)":
     mem_gb: 96
-    bw_gbs: 700
-    fp16_tflops: 180
-    fp8_tflops: 0
-    nvlink: true            # HCCS/xGMI 高速片间互联
+    bw_gbs: 4000            # ⚠ 暂用H20同档带宽作参考值, 非实测, 待跑bench校准
+    fp16_tflops: 120        # 基础版峰值算力(单卡)
+    fp8_tflops: 0           # 架构不支持原生 FP8
+    nvlink: true            # ICN 片间高速互联, 带宽 700GB/s
     source: estimate
-    note: "阿里平头哥真武810E，96GB HBM2e，ICN 700GB/s，不支持FP8，功耗400W。"
+    note: "PPU ZW810E基础版，96GB HBM2e(Hynix)@1800MHz，ICN片间互联700GB/s，PCIe 5.0×16，功耗400W，不支持FP8。⚠ 显存带宽(4000GB/s)为临时估值，上线前务必实测校准！"
 
 # ============================================================================
 # 校准提示:

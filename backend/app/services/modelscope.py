@@ -401,7 +401,10 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
                 spec.tensor_types = _extract_tensor_types(cfg, model_id)
 
                 # 架构特征: MoE / 线性注意力 (影响吞吐建模)
-                _detect_architecture(cfg, spec, model_id)
+                # 合并 cfg + text_config, 使 _detect_architecture 能查到嵌套字段
+                # 注意: cfg 顶层可能含 None 值会覆盖 tc 的有效值, 需过滤
+                merged_cfg = {**tc, **{k: v for k, v in cfg.items() if v is not None}}
+                _detect_architecture(merged_cfg, spec, model_id)
 
             # 处理权重
             if wgb:
@@ -416,6 +419,14 @@ async def get_model_config(model_id: str) -> dict[str, Any]:
                 spec.params_accurate = True
     except Exception:
         config_found = False
+        cfg_error = "config fetch exception"
+
+    # 降级: 即使 config.json 拉取失败或未识别 MoE，也从模型名中检测
+    if not spec.is_moe:
+        active = _active_b_from_name(model_id)
+        if active:
+            spec.is_moe = True
+            spec.active_params_b = round(active, 2)
 
     out = spec.model_dump()
     out["config_found"] = config_found

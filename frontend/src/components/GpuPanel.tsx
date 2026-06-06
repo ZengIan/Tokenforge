@@ -3,12 +3,16 @@ import type { GpuSpec, IntraNode } from "../types";
 
 /** 根据卡型名称返回高速互联技术名称 */
 function describeInterconnect(spec: GpuSpec): string {
-  if (!spec.nvlink) return "无高速互联";
+  if (!spec.nvlink) return "纯 PCIe";
   const n = spec.name;
-  if (n.includes("NVIDIA")) return "NVLink";
+  if (n.includes("平头哥") || n.includes("PPU")) return "ICN 700GB/s";
   if (n.includes("华为") || n.includes("Ascend") || n.includes("昇腾")) return "HCCS";
   if (n.includes("海光") || n.includes("Hygon") || n.includes("DCU")) return "xGMI";
-  if (n.includes("平头哥") || n.includes("PPU")) return "ICN";
+  if (n.includes("昆仑芯") || n.includes("Kunlunxin")) return "XCCL";
+  if (n.includes("寒武纪") || n.includes("Cambricon") || n.includes("MLU")) return "MLU-Link";
+  if (n.includes("天数智芯") || n.includes("Iluvatar")) return "BI-Link";
+  if (n.includes("沐曦") || n.includes("MetaX")) return "MetaXLink";
+  if (n.includes("NVIDIA")) return "NVLink";
   return "高速互联";
 }
 
@@ -93,10 +97,9 @@ export function GpuPanel() {
               className="input w-36 shrink-0 text-xs"
               value={inference.intra_node}
               onChange={(e) => setInference({ intra_node: e.target.value as IntraNode })}
-              title="单机内卡间互联方式：影响张量并行(TP)通信效率。高速 NVLink/HCCS 几乎无损，纯 PCIe 约 -15%。"
+              title="单机内卡间互联方式：影响张量并行(TP)通信效率。有高速互联(NVLink/ICN/HCCS)几乎无损，纯 PCIe 约 -15%。"
             >
-              <option value="auto">机内：按卡库识别</option>
-              <option value="highspeed">NVLink / HCCS</option>
+              <option value="auto">自动识别: {describeInterconnect(group.spec)}</option>
               <option value="pcie">纯 PCIe</option>
             </select>
           )}
@@ -129,6 +132,16 @@ export function GpuPanel() {
             </span>
           )}
         </div>
+        {group.spec.note && (
+          <div className={
+            "mt-1.5 rounded-md px-2 py-1 text-[11px] leading-relaxed " +
+            (group.spec.source === "estimate"
+              ? "border border-amber-700/40 bg-amber-900/20 text-amber-300"
+              : "border border-slate-700/40 bg-slate-800/50 text-slate-400")
+          }>
+            {group.spec.source === "estimate" ? "⚠ " : ""}{group.spec.note}
+          </div>
+        )}
       </div>
     </div>
   );

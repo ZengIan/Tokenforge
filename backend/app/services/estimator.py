@@ -313,23 +313,21 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         if f < 1.0:
             warnings.append(
                 f"{n_nodes} 机跨机部署({inf.internode}): 跨机通信已下调算力效率 "
-                f"{int(round((1 - f) * 100))}%。若为 NVLink Switch/HCCS 等高速无损互联,"
+                f"{int(round((1 - f) * 100))}%。若为 NVLink Switch/HCCS/MLU-Link 等高速无损互联,"
                 "可将'跨机互联'选为'高速无损'消除此损耗。"
             )
         else:
             warnings.append(
-                f"{n_nodes} 机跨机部署: 已按高速无损互联(NVLink Switch/HCCS)计,跨机通信几乎无损耗。"
+                f"{n_nodes} 机跨机部署: 已按高速无损互联(NVLink Switch/HCCS/MLU-Link 等)计,跨机通信几乎无损耗。"
             )
     elif n_gpu > 1:
-        # 单机多卡: 机内互联 (auto 按卡库 nvlink, 否则按用户选择)
-        has_highspeed = (
-            all_nvlink if inf.intra_node == "auto" else inf.intra_node == "highspeed"
-        )
+        # 单机多卡: 机内互联 (auto 按卡库 nvlink, pcie 强制纯 PCIe)
+        has_highspeed = all_nvlink if inf.intra_node == "auto" else False
         if not has_highspeed:
             compute_util *= 0.85
             warnings.append(
-                "机内按纯 PCIe(无 NVLink/HCCS)计,TP 通信开销已下调效率 ~15%;"
-                "若卡间有 HCCS/NVLink 链路,请把'机内互联'选为'高速'。"
+                "机内按纯 PCIe(无高速互联)计,TP 通信开销已下调效率 ~15%;"
+                "若卡间有 NVLink/HCCS/MLU-Link 等高速链路,请把'机内互联'选为'高速'。"
             )
 
     batch = inf.max_num_seqs  # continuous batching: in-flight sequences
@@ -381,8 +379,23 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     in_len = min(inf.input_len, inf.max_model_len)  # prompt 不超过上下文
     #   FFN/投影(线性): 2 × 激活参数 × prompt; MoE 按激活参数
     ffn_flops = 2 * active_params * in_len
-    #   注意力(QK^T + AV): ~4 × prompt² × hidden × 层数, 长 prompt 时主导
-    attn_flops = 4 * (in_len ** 2) * model.hidden_size * model.num_layers
+    #   注意力(QK^T + AV): 全注意力层 O(n²), 线性注意力层 O(n)
+    n_full_attn = model.num_full_attention_layers
+    if model.is_linear_attn and n_full_attn > 0:
+        # 混合注意力: 精确按层计数
+        n_linear = model.num_layers - n_full_attn
+        attn_flops = (4 * (in_len ** 2) * model.hidden_size * n_full_attn
+                      + 2 * in_len * model.hidden_size * n_linear)
+    elif model.is_linear_attn:
+        # 混合注意力但无法区分层数: 按 kv_cache_factor 估算全注意力占比
+        full_ratio = model.kv_cache_factor if model.kv_cache_factor < 1.0 else 0.25
+        n_full_est = max(1, int(model.num_layers * full_ratio))
+        n_linear_est = model.num_layers - n_full_est
+        attn_flops = (4 * (in_len ** 2) * model.hidden_size * n_full_est
+                      + 2 * in_len * model.hidden_size * n_linear_est)
+    else:
+        # 标准全注意力: 所有层 O(n²)
+        attn_flops = 4 * (in_len ** 2) * model.hidden_size * model.num_layers
     prefill_flops = ffn_flops + attn_flops
     # 单请求(低负载)prefill 计算时间
     ttft_single = prefill_flops / (flops_replica * compute_util) * (1.0 + 0.10 * (pp - 1))
