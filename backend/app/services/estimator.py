@@ -397,8 +397,9 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     else:
         prefill_compute_util = compute_util * internode_prefill_factor
     ttft_single = prefill_flops / (flops_replica * prefill_compute_util) * (1.0 + 0.10 * (pp - 1))
-    # 并发争抢: prefill 算力守恒, B 路并发时按 FIFO 平均排队 (B+1)/2 拉高 TTFT
-    prefill_contention = (eff_batch + 1) / 2.0
+    # 并发争抢: continuous batching 下 prefill 不会完全串行排队
+    # 真实行为是分时复用算力，争抢随并发增长但增幅递减，用 sqrt 近似
+    prefill_contention = 1.0 + 0.5 * (eff_batch - 1) / max(1, eff_batch ** 0.5)
     ttft = ttft_single * prefill_contention + overhead_s
 
     def _safe(x: float) -> float:
