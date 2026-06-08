@@ -206,9 +206,11 @@ function buildJisuanSheet(wb: ExcelJS.Workbook) {
 /* ================= 2. 性能估算 Sheet (作为第二个工作表) ================= */
 function buildMatrixSheet(wb: ExcelJS.Workbook, records: ExportRecord[]) {
   const ws = wb.addWorksheet("性能估算");
-  ws.views = [{ showGridLines: true }];
   
   COLS.forEach((c, i) => (ws.getColumn(i + 1).width = c.w));
+
+  // 冻结窗格：固定前 2 列（算力卡类型、模型名称），标题行+表头行不滚动
+  ws.views = [{ showGridLines: true, state: "frozen", xSplit: 2, ySplit: 2, topLeftCell: "C3", activeCell: "C3" }];
 
   // 标题
   const title = ws.addRow([TITLE]);

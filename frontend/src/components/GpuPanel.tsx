@@ -73,7 +73,7 @@ export function GpuPanel() {
             <input
               type="number"
               min={1}
-              className="input w-16"
+              className="input w-14"
               value={group.count}
               onChange={(e) =>
                 updateGpuGroup(0, { count: Math.max(1, Number(e.target.value)) })
@@ -94,7 +94,7 @@ export function GpuPanel() {
           </label>
           {nGpu > 1 && (
             <select
-              className="input w-36 shrink-0 text-xs"
+              className="input w-40 text-xs !px-2"
               value={inference.intra_node}
               onChange={(e) => setInference({ intra_node: e.target.value as IntraNode })}
               title="单机内卡间互联方式：影响张量并行(TP)通信效率。有高速互联(NVLink/ICN/HCCS)几乎无损，纯 PCIe 约 -15%。"
