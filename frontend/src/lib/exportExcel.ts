@@ -81,6 +81,82 @@ const COLS: { h: string; w: number }[] = [
 const N = COLS.length; // 18
 const TITLE = "模型推理性能矩阵 · 按上下文长度递增、并发递减";
 
+/**
+ * 按引擎生成启动命令（多行，续行缩进）。flag 名按引擎映射，
+ * 力求与官方命令 1:1 对应。返回行数组（已含命令头）。
+ */
+export function buildLaunchCommand(
+  modelId: string,
+  inf: InferenceConfig,
+  nGpu: number,
+): string[] {
+  const m = modelId || "<model-path>";
+  const ind = (s: string) => `  ${s}`;
+
+  if (inf.engine === "sglang") {
+    // SGLang: flag 名与 vLLM 不同
+    const kv = inf.kv_cache_dtype === "auto" ? "bfloat16" : inf.kv_cache_dtype;
+    const lines = [
+      "python -m sglang.launch_server",
+      ind(`--model-path ${m}`),
+      ind("--trust-remote-code"),
+      ind(`--context-length ${inf.max_model_len}`),
+      ind(`--max-running-requests ${inf.max_num_seqs}`),
+      ind(`--chunked-prefill-size ${inf.max_num_batched_tokens}`),
+      ind(`--mem-fraction-static ${inf.gpu_memory_utilization}`),
+    ];
+    if (inf.quantization !== "none") lines.push(ind(`--quantization ${inf.quantization}`));
+    lines.push(ind(`--kv-cache-dtype ${kv}`));
+    if (inf.enable_dp_attention) {
+      lines.push(ind(`--tp ${inf.tp_size}`));
+      lines.push(ind(`--dp ${inf.dp_size}`));
+      lines.push(ind("--enable-dp-attention"));
+      if (inf.enable_dp_lm_head) lines.push(ind("--enable-dp-lm-head"));
+      if (inf.moe_a2a_backend === "deepep") {
+        lines.push(ind("--moe-a2a-backend deepep"));
+        lines.push(ind(`--deepep-mode ${inf.deepep_mode}`));
+      }
+      lines.push(ind(`--moe-dense-tp-size ${inf.moe_dense_tp_size}`));
+      const replicas = inf.tp_size > 0 ? Math.floor(nGpu / inf.tp_size) : 1;
+      if (replicas > 1) {
+        lines.push(ind(`# 共 ${nGpu} 卡 = TP ${inf.tp_size} × ${replicas} 副本（起 ${replicas} 个实例，前置路由分流）`));
+      }
+    } else if (inf.parallel_enabled) {
+      lines.push(ind(`--tp ${inf.tp_size}`));
+      if (inf.dp_size > 1) lines.push(ind(`--dp ${inf.dp_size}`));
+      if (inf.pp_size > 1) lines.push(ind(`--pp ${inf.pp_size}`));
+    } else {
+      lines.push(ind(`--tp ${nGpu}`));
+    }
+    if (inf.enforce_eager) lines.push(ind("--disable-cuda-graph"));
+    return lines;
+  }
+
+  // vLLM 标准 / vllm-ascend（命令同为 vllm serve，差异在 --quantization 值）
+  const lines = [
+    `vllm serve ${m}`,
+    ind("--trust-remote-code"),
+    ind(`--max-model-len ${inf.max_model_len}`),
+    ind(`--max-num-seqs ${inf.max_num_seqs}`),
+    ind(`--max-num-batched-tokens ${inf.max_num_batched_tokens}`),
+    ind(`--gpu-memory-utilization ${inf.gpu_memory_utilization}`),
+    ind(`--dtype ${inf.dtype}`),
+  ];
+  if (inf.quantization !== "none") lines.push(ind(`--quantization ${inf.quantization}`));
+  lines.push(ind(`--kv-cache-dtype ${inf.kv_cache_dtype}`));
+  if (inf.enforce_eager) lines.push(ind("--enforce-eager"));
+  if (inf.async_scheduling) lines.push(ind("--async-scheduling"));
+  if (inf.enable_expert_parallel) lines.push(ind("--enable-expert-parallel"));
+  if (inf.parallel_enabled) {
+    lines.push(ind(`--tensor-parallel-size ${inf.tp_size}`));
+    if (inf.pp_size > 1) lines.push(ind(`--pipeline-parallel-size ${inf.pp_size}`));
+    if (inf.dp_size > 1) lines.push(ind(`--data-parallel-size ${inf.dp_size}`));
+  } else {
+    lines.push(ind(`--tensor-parallel-size ${nGpu}`));
+  }
+  return lines;
+}
+
 export function buildRecord(
   model: ModelSpec,
   gpuGroups: GpuGroup[],
@@ -94,23 +170,8 @@ export function buildRecord(
   const hi = Math.round(r.single_tps_high);
   const rating = ratingOf(r.single_tps_low, r.ttft_ms);
 
-  // 动态生成推理参数说明（对应 ③ 推理参数面板的所有 vLLM 启动参数）
-  const infArgs: string[] = [
-    `--max-model-len ${inf.max_model_len}`,
-    `--max-num-seqs ${inf.max_num_seqs}`,
-    `--max-num-batched-tokens ${inf.max_num_batched_tokens}`,
-    `--gpu-memory-utilization ${inf.gpu_memory_utilization}`,
-    `--dtype ${inf.dtype}`,
-    `--quantization ${inf.quantization}`,
-    `--kv-cache-dtype ${inf.kv_cache_dtype}`,
-  ];
-  if (inf.enforce_eager) infArgs.push("--enforce-eager");
-  if (inf.async_scheduling) infArgs.push("--async-scheduling");
-  if (inf.parallel_enabled) {
-    infArgs.push(`--tensor-parallel-size ${inf.tp_size}`);
-    infArgs.push(`--pipeline-parallel-size ${inf.pp_size}`);
-    infArgs.push(`--data-parallel-size ${inf.dp_size}`);
-  }
+  // 按引擎生成启动命令（vLLM / vllm-ascend / SGLang，flag 名按引擎映射）
+  const cmdLines = buildLaunchCommand(model.model_id, inf, nGpu);
 
   const cells: (string | number)[] = [
     card,
@@ -130,7 +191,7 @@ export function buildRecord(
     Math.round(r.ttft_ms),
     n2(r.tpot_ms),
     rating.label,
-    infArgs.map((a) => `  ${a}`).join("\n"),
+    cmdLines.join("\n"),
   ];
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -152,7 +213,7 @@ const JISUAN_ROWS: [string, string, string][] = [
   ["TTFT", "TTFT = (单卡prefill计算 ÷ TP + TP通信 + PP通信) × 并发争抢 + 固定开销\n• 单卡prefill计算 = (2×激活参数×输入长度 + 注意力O(n²)) ÷ (单卡算力×利用率)，只有 TP 能并行 prefill 计算 → 仅除以 TP\n• TP通信 = TP all-reduce，按机内/机间链路带宽显式计时（TP 组跨机走慢链路 → 跨机更慢，NVLink Switch 无损则≈单机）\n• PP通信 = 级间激活传输，对单请求只增不减\n• 并发争抢按 √ 缩放（continuous batching 分时复用，非线性串行）\n默认不勾自定义并行时 TP=总卡数、PP=DP=1\nprefill 是算力瓶颈：prompt 越长、并发越高，TTFT 越大", "并发1/2K≈几十ms\n并发8/2K≈数百ms\n并发8/32K≈数秒(此为平均, P99更高)"],
   ["TPOT", "TPOT = (激活权重 + 本路 KV) ÷ (带宽 × 利用率) + 固定开销\nKV 读取随上下文增长 → 长上下文 TPOT 变大", "激活权重 ≈ 10.99B × 1字节 = 10.99 GB\n本路 KV / 并发 ≈ 160GB / 8 = 20 GB/路\n(10.99 + 20) ÷ (3200 × 80%) ≈ 12 ms\n+ 固定开销 ≈ 4-5 ms → TPOT ≈ 16-17 ms"],
   ["跨机互联损耗", "多机部署损耗分两路，按真实链路建模：\n• prefill/TTFT：TP all-reduce / PP 通信走机间链路，按链路有效带宽显式计时（不再是固定百分比折扣）\n• decode/TPOT：每 token 固定开销 × 延迟放大系数\n\n各互联类型（机间有效带宽 / decode 延迟放大）：\n• NVLink Switch 无损网络：≈150GB/s / 1.0×（跨机≈单机）\n• InfiniBand IB 网络：≈50GB/s / 1.2×\n• RoCE 高速网络：≈25GB/s / 1.5×\n• 25G 普通以太网：≈8GB/s / 2.5×\n机内纯 PCIe（无 NVLink/HCCS）：TP all-reduce 走 ~25GB/s（vs 高速 ~150GB/s）", ""],
-  ["量化类型", "• fp8/w8a8 = 8 bit（1 字节/参数）\n• awq/gptq/w4a8/w4a16 = 4 bit（0.5 字节/参数）\n• none = 按 dtype（BF16/FP16）\n量化越激进越省显存，但精度损失越大", ""],
+  ["量化类型", "8 bit（1 字节/参数）：fp8(仅 NVIDIA H/B) / ascend(昇腾 W8A8) / w8a8_int8(PPU INT8)\n4 bit（0.5 字节/参数）：awq / gptq / bitsandbytes\nnone = 按 dtype（BF16/FP16，2 字节）\n量化合法值随引擎而定：vllm-ascend→ascend；SGLang(PPU)→w8a8_int8；vLLM(H/B)→fp8/awq/gptq\n量化越激进越省显存，但精度损失越大", ""],
   ["体感评级阈值", "✅ 流畅：TPS ≥ 30 且 TTFT ≤ 2s\n✅ 良好：TPS ≥ 20 且 TTFT ≤ 5s\n🟢 可接受：TPS ≥ 15 且 TTFT ≤ 10s\n🟡 偏慢：TPS ≥ 10 且 TTFT ≤ 20s\n🟠 仅演示:TPS ≥ 5 或 TTFT ≤ 40s\n🔴 离线/批处理：其他（TTFT 过长，仅适合离线任务）", ""],
   ["说明", "估算为理论近似值，实际推理性能以实测为准；\nsource=estimate 的卡型算力/带宽为占位值，性能仅供参考", ""]
 ];
