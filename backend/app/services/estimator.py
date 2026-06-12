@@ -37,8 +37,11 @@ DTYPE_BYTES: dict[str, float] = {
 # --quantization -> 每参数权重字节数。"none" 表示不量化,按 --dtype 计。
 QUANT_BYTES: dict[str, float] = {
     "fp8": 1.0,
+    "ascend": 1.0,      # 昇腾 vllm-ascend W8A8 (8bit)
+    "w8a8_int8": 1.0,   # SGLang/PPU INT8 (8bit)
     "int8": 1.0,
     "w8a8": 1.0,
+    "bitsandbytes": 0.5,  # 默认 4bit (nf4)
     "awq": 0.5,     # 4bit 组量化
     "gptq": 0.5,    # 4bit 组量化
     "w4a8": 0.5,
@@ -51,10 +54,11 @@ QUANT_OVERHEAD: dict[str, float] = {
     "gptq": 1.10,
     "w4a8": 1.05,
     "w4a16": 1.05,
+    "bitsandbytes": 1.05,
 }
 
-# 激活为 8bit/FP8 的量化方案,decode 计算可走低精度 Tensor Core
-LOW_PRECISION_COMPUTE = {"fp8", "w8a8", "w4a8"}
+# 激活为 8bit/FP8/INT8 的量化方案,decode 计算可走低精度 Tensor Core
+LOW_PRECISION_COMPUTE = {"fp8", "w8a8", "w4a8", "ascend", "w8a8_int8", "int8"}
 
 # --kv-cache-dtype -> 每元素字节数。auto 跟随 --dtype。
 KV_DTYPE_BYTES: dict[str, float] = {
@@ -144,7 +148,19 @@ def _kv_heads(model: ModelSpec) -> int:
 
 
 def _parallel_sizes(inf: InferenceConfig, n_gpu: int) -> tuple[int, int, int]:
-    """返回 (tp, pp, dp)。未启用并行配置时 TP=总卡数, PP=DP=1。"""
+    """返回 (tp, pp, dp)。未启用并行配置时 TP=总卡数, PP=DP=1。
+
+    SGLang DP-Attention 特例: world_size = TP(每实例 TP 卡), 总卡数 = TP × 副本数。
+    注意力 DP(用户填的 --dp) 属实例内并行, 不影响权重/吞吐切分; 估算用"副本数"
+    (replicas = n_gpu // tp) 作为等效 DP——每副本是一套独立的 TP 实例(权重各放一份、
+    各服务不同请求), 与标准 DP 的显存/吞吐语义一致。这样权重按 TP 切分、按副本数复制,
+    避免把 --dp 当成权重复制导致显存高估。
+    """
+    if inf.engine == "sglang" and inf.enable_dp_attention:
+        tp = max(1, inf.tp_size) if inf.tp_size else n_gpu
+        tp = min(tp, n_gpu)
+        replicas = max(1, n_gpu // tp)
+        return tp, 1, replicas
     if inf.parallel_enabled:
         return max(1, inf.tp_size), max(1, inf.pp_size), max(1, inf.dp_size)
     return max(1, n_gpu), 1, 1
@@ -259,17 +275,27 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     params = model.params_b * 1e9
 
     # aggregate hardware roofline across the whole TP group
-    use_fp8 = inf.quantization in LOW_PRECISION_COMPUTE
+    # 低精度计算(FP8/INT8)可走低精度 Tensor Core; 卡库的 fp8_tflops 字段代表"低精度算力",
+    # 国产卡(910C/PPU)走 INT8 时也用该字段。为 0 表示卡库未录入低精度算力。
+    use_low_prec = inf.quantization in LOW_PRECISION_COMPUTE
+    is_fp8_quant = inf.quantization == "fp8"
     flops_total = 0.0
     bw_total = 0.0  # bytes/s
     total_mem_gb = 0.0
     all_nvlink = True
     for g in req.gpus:
-        peak = g.spec.fp8_tflops if use_fp8 and g.spec.fp8_tflops > 0 else g.spec.fp16_tflops
-        if use_fp8 and g.spec.fp8_tflops <= 0:
-            warnings.append(
-                f"{g.spec.name} 无原生 FP8 算力,已回退到 FP16 算力估算。"
-            )
+        peak = g.spec.fp8_tflops if use_low_prec and g.spec.fp8_tflops > 0 else g.spec.fp16_tflops
+        if use_low_prec and g.spec.fp8_tflops <= 0:
+            if is_fp8_quant:
+                warnings.append(
+                    f"{g.spec.name} 无原生 FP8 算力(仅 NVIDIA Hopper/Blackwell 支持),"
+                    "已回退到 FP16 算力估算;该卡通常应改用 INT8 类量化。"
+                )
+            else:
+                warnings.append(
+                    f"{g.spec.name} 卡库未录入 INT8/低精度算力,已按 FP16 算力估算"
+                    "(实际低精度算力更高,TPS 可能偏保守)。"
+                )
         flops_total += peak * 1e12 * g.count
         bw_total += g.spec.bw_gbs * 1e9 * g.count
         total_mem_gb += g.spec.mem_gb * g.count
@@ -285,7 +311,26 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     # ---- 并行配置 + 合理性校验 ----
     tp, pp, dp = _parallel_sizes(inf, n_gpu)
     mp = max(1, tp * pp)
-    if inf.parallel_enabled:
+    dp_attn = inf.engine == "sglang" and inf.enable_dp_attention
+    if dp_attn:
+        # SGLang DP-Attention: world_size = TP(每实例 TP 卡), 总卡数 = TP × 副本数
+        utp, udp = max(1, inf.tp_size), max(1, inf.dp_size)
+        if n_gpu % utp != 0:
+            warnings.append(
+                f"⚠ SGLang DP-Attention 模式: 总卡数 {n_gpu} 必须是 TP={utp} 的整数倍"
+                f"(每实例 {utp} 卡,共 {n_gpu // utp if utp else 0} 个副本),否则无法启动。"
+            )
+        if utp % udp != 0:
+            warnings.append(
+                f"⚠ SGLang DP-Attention 模式: TP={utp} 必须能被注意力 DP={udp} 整除"
+                "(需 tp % dp == 0)。"
+            )
+        if model.num_attention_heads % utp != 0:
+            warnings.append(
+                f"⚠ 注意力头数 {model.num_attention_heads} 不能被 TP={utp} 整除,"
+                "张量并行无法切分,模型无法启动。"
+            )
+    elif inf.parallel_enabled:
         world = tp * pp * dp
         if world != n_gpu:
             warnings.append(

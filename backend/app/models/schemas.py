@@ -7,12 +7,18 @@ from pydantic import BaseModel, Field
 
 # --dtype: 计算精度
 DType = Literal["auto", "float16", "bfloat16", "float32"]
-# --quantization: 权重量化方法 (vLLM 取值风格)
+# --quantization: 权重量化方法 (按引擎合法值取并集; 前端按"引擎×卡能力"过滤下拉)
+#   vLLM(NVIDIA H+): fp8/awq/gptq/bitsandbytes  vLLM(旧卡/海光): awq/gptq/bitsandbytes
+#   vllm-ascend(昇腾): ascend   SGLang(PPU): w8a8_int8/awq/gptq/fp8
+#   legacy(int8/w8a8/w4a8/w4a16) 仅为旧分享链接/记录向后兼容保留, 前端下拉不再展示。
 Quantization = Literal[
-    "none", "fp8", "awq", "gptq", "int8", "w8a8", "w4a8", "w4a16"
+    "none", "fp8", "awq", "gptq", "bitsandbytes", "ascend", "w8a8_int8",
+    "int8", "w8a8", "w4a8", "w4a16",
 ]
-# --kv-cache-dtype: KV 缓存精度
-KVCacheDType = Literal["auto", "fp8", "fp8_e5m2", "fp8_e4m3", "int8"]
+# --kv-cache-dtype: KV 缓存精度 (SGLang 习惯用 bfloat16 显式关闭 KV 量化)
+KVCacheDType = Literal["auto", "fp8", "fp8_e5m2", "fp8_e4m3", "int8", "bfloat16"]
+# 推理引擎: vllm(标准)/vllm-ascend(昇腾)/sglang(PPU)
+Engine = Literal["vllm", "vllm-ascend", "sglang"]
 # 跨机(多机)互联类型: 卡数 > 单机上限时生效
 InterNode = Literal["nvlink", "ib", "roce", "ethernet"]
 
@@ -107,11 +113,28 @@ class InferenceConfig(BaseModel):
     #   ib = InfiniBand IB 网络; roce = RoCE 高速网络; ethernet = 普通以太网
     internode: InterNode = "roce"
     async_scheduling: bool = False  # --async-scheduling
+    # --- 推理引擎 (影响量化合法值/启动命令/并行语义) ---
+    #   vllm        = 标准 vLLM (NVIDIA/海光)
+    #   vllm-ascend = 昇腾 vllm-ascend (--quantization ascend)
+    #   sglang      = SGLang (PPU, 支持 DP-Attention)
+    engine: Engine = "vllm"
+    # --- SGLang 专用 (engine=sglang 时生效) ---
+    # --enable-dp-attention: 注意力数据并行。开启后 world_size=TP, 每实例 TP 卡,
+    #   总卡数 = TP × 副本数(replicas = n_gpu // tp); 权重按 TP 切分、不按注意力 DP 复制。
+    enable_dp_attention: bool = False
+    enable_dp_lm_head: bool = False        # --enable-dp-lm-head
+    moe_a2a_backend: Literal["none", "deepep"] = "none"  # --moe-a2a-backend
+    deepep_mode: Literal["auto", "low_latency", "normal"] = "auto"  # --deepep-mode
+    moe_dense_tp_size: int = Field(1, ge=1, le=1024)  # --moe-dense-tp-size
+    # --- vLLM 专用 ---
+    enable_expert_parallel: bool = False   # --enable-expert-parallel (MoE EP)
+    # --- 多机启动 (仅导出命令用) ---
+    dist_init_addr: str = ""               # --dist-init-addr / master 地址
     # --- 并行配置(可选; 不启用时 TP=总卡数, PP=DP=1) ---
     parallel_enabled: bool = False
-    tp_size: int = Field(1, ge=1, le=1024)  # --tensor-parallel-size
+    tp_size: int = Field(1, ge=1, le=1024)  # --tensor-parallel-size / --tp
     pp_size: int = Field(1, ge=1, le=256)   # --pipeline-parallel-size
-    dp_size: int = Field(1, ge=1, le=256)   # --data-parallel-size
+    dp_size: int = Field(1, ge=1, le=256)   # --data-parallel-size / --dp
     # optional manual override of bandwidth/compute utilisation [0,1]
     mem_util: Optional[float] = None
     compute_util: Optional[float] = None
