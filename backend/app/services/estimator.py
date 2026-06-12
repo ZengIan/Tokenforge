@@ -365,13 +365,18 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     # ---- 互联通信损耗 ----
     # decode 跨机损耗走"每 token 延迟放大"(internode_overhead_mult, 进 overhead_s);
     # prefill/TTFT 的跨机损耗由 TTFT 物理模型里的 TP all-reduce / PP 通信项显式计时。
+    # 关键: 按"实际通信的并行组(mp=TP×PP, 即单副本卡数)是否跨节点"判定, 而非总卡数——
+    # DP 副本间每 token 零通信, 多机纯 DP(如 2 机各放 1 个 TP8 副本)不应吃跨机损耗。
     internode_overhead_mult = 1.0
-    if n_gpu > inf.gpus_per_node:
-        # 多机/跨机: 损耗取决于跨机互联类型
+    mp_spans_nodes = mp > inf.gpus_per_node
+    if mp_spans_nodes:
+        # 单副本(TP×PP 组)跨机: decode 每 token all-reduce 走机间链路, 延迟放大
         internode_overhead_mult = INTERNODE_OVERHEAD_MULT.get(inf.internode, 1.5)
     elif n_gpu > 1:
-        # 单机多卡: 机内互联 (auto 按卡库 nvlink, pcie 强制纯 PCIe)
-        has_highspeed = all_nvlink if inf.intra_node == "auto" else False
+        # 副本内通信都在机内: 看机内互联 (auto 按卡库 nvlink; 显式 highspeed 视为高速)
+        has_highspeed = (
+            all_nvlink if inf.intra_node == "auto" else inf.intra_node != "pcie"
+        )
         if not has_highspeed:
             compute_util *= 0.85
 
@@ -471,7 +476,8 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     # ③ PP 项: 级间传激活 + 气泡, 对单请求 TTFT 只增不减(PP 不能加速单请求 prefill)。
     t_pp = 0.0
     if pp > 1:
-        cross = n_gpu > inf.gpus_per_node
+        # 单副本(TP×PP)跨节点时, PP 级间链路才走机间; 多机纯 DP 不算跨机
+        cross = mp_spans_nodes
         bw_pp = INTERNODE_LINK_BW.get(inf.internode, 50.0) if cross else LINK_BW_INTRA_HS
         lat_pp = INTERNODE_LINK_LAT.get(inf.internode, 2e-5) if cross else LINK_LAT_INTRA
         t_pp = (pp - 1) * (msg_bytes / (bw_pp * 1e9) + lat_pp)
