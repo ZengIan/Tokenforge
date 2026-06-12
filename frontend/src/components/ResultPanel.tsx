@@ -107,11 +107,11 @@ function MetricCards({ r }: { r: EstimateResponse }) {
       value: r.ttft_ms.toFixed(0),
       unit: "ms",
       tip:
-        "prefill(读题)时间——算力瓶颈，同时随【输入长度】和【并发】增长。\n" +
-        "= 单请求prefill × 并发争抢系数 + 固定开销\n" +
-        "  单请求 = (2×激活参数×输入长度 + 注意力O(n²)) ÷ (算力×利用率)\n" +
-        "  并发争抢 = (并发+1)/2 —— prefill 算力守恒，多路并发排队拉高首字\n" +
-        "★ 长 prompt(O(n²)) + 高并发会让 TTFT 到秒级；这是平均值，P99 更高。",
+        "prefill(读题)时间——算力瓶颈，随【并发】增长；按典型输入 2K tokens 估算。\n" +
+        "= (单卡prefill计算 ÷ TP + TP通信 + PP通信) × 并发争抢(√缩放) + 固定开销\n" +
+        "  prefill计算 = (2×激活参数×输入 + 注意力O(n²)) ÷ (算力×利用率)，仅 TP 可并行\n" +
+        "  TP/PP 通信按机内/机间链路带宽计时——跨机走慢链路更慢，NVLink Switch 无损≈单机\n" +
+        "★ 实际 prompt 越长 TTFT 越高(O(n²))；这是平均值，P99 更高。",
     },
     {
       label: "TPOT 每字延迟",
