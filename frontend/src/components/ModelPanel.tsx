@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchModelDetail, searchModels } from "../api";
 import { useStore } from "../store";
+import { cardHasNativeFp8, coerceQuant } from "../lib/engine";
 import type { Quantization, SearchResult } from "../types";
 
 // 模型名里的量化标识 -> 量化方式(优先级从上到下)
@@ -23,7 +24,7 @@ function quantFromName(modelId: string): Quantization | null {
 
 export function ModelPanel() {
   const LIMIT = 6;
-  const { model, setModel, setInference } = useStore();
+  const { model, setModel, setInference, inference, gpuGroups } = useStore();
   const [q, setQ] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen] = useState(false);
@@ -119,8 +120,13 @@ export function ModelPanel() {
     skipNext.current = true; // 防止填入模型名后又自动检索一次
     setOpen(false);
     setQ(r.model_id);
-    // 按模型名自动匹配量化方式(如 ...-w4a8 / -fp8 / -awq); 名字不带量化标识 → none
-    setInference({ quantization: quantFromName(r.model_id) ?? "none" });
+    // 按模型名自动匹配量化方式(如 ...-w8a8 / -fp8 / -awq), 并按当前引擎翻译成
+    // 该引擎的合法拼写(910C→ascend / PPU→w8a8_int8 / vLLM→w8a8/fp8); 名字无标识 → none
+    const detected = quantFromName(r.model_id);
+    const hasFp8 = cardHasNativeFp8(gpuGroups[0]?.spec);
+    setInference({
+      quantization: detected ? coerceQuant(inference.engine, hasFp8, detected) : "none",
+    });
     // 官方仓库大小 (StorageSize) 来自搜索结果,作为权重大小的权威来源
     try {
       const detail = await fetchModelDetail(r.model_id);
