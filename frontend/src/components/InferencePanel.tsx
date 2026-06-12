@@ -235,9 +235,9 @@ export function InferencePanel() {
         </div>
       </div>
 
-      {/* SGLang DP-Attention 专区 (engine=sglang) */}
+      {/* SGLang DP-Attention (engine=sglang)，与上方开关对齐，不用单独描边盒子 */}
       {isSglang && (
-        <div className="mt-2 rounded-lg border border-sky-800/50 bg-sky-950/20 p-2">
+        <div className="mt-2">
           <Toggle
             label="DP-Attention (注意力数据并行)"
             flag="--enable-dp-attention"
@@ -258,8 +258,8 @@ export function InferencePanel() {
             }
           />
           {dpAttn && (
-            <>
-              <div className="mt-1.5 grid grid-cols-2 gap-2">
+            <div className="mt-1.5 rounded-md border border-slate-700/60 bg-slate-900/40 p-2">
+              <div className="grid grid-cols-2 gap-2">
                 <ParField
                   label="张量并行 TP"
                   flag="--tp"
@@ -322,13 +322,13 @@ export function InferencePanel() {
                   />
                 </div>
               )}
-            </>
+            </div>
           )}
         </div>
       )}
 
-      {/* 并行配置 (TP/PP/DP) — DP-Attention 开启时由上面接管 */}
-      {!dpAttn && (
+      {/* 并行配置 (TP/PP/DP) — SGLang(PPU) 走上面的 DP-Attention，这里隐藏 */}
+      {!isSglang && (
       <div className="mt-2">
         <Toggle
           label="自定义并行 (TP/PP/DP)"
