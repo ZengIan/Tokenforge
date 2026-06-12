@@ -254,6 +254,13 @@ export function InferencePanel() {
             />
           </div>
         )}
+        {i.parallel_enabled && <ParallelConfigValidator
+          tp={i.tp_size}
+          pp={i.pp_size}
+          dp={i.dp_size}
+          nGpu={nGpu}
+          onAutoFix={(tp, pp, dp) => setInference({ tp_size: tp, pp_size: pp, dp_size: dp })}
+        />}
       </div>
 
       {/* 跨机互联 (真多机时) */}
@@ -476,6 +483,61 @@ function Toggle({
       />
       <LabelRow label={label} flag={flag} tip={tip} />
     </label>
+  );
+}
+
+/** 并行配置校验器：实时显示 TP×PP×DP 与物理卡数的关系 */
+function ParallelConfigValidator({
+  tp, pp, dp, nGpu, onAutoFix,
+}: {
+  tp: number; pp: number; dp: number; nGpu: number;
+  onAutoFix: (tp: number, pp: number, dp: number) => void;
+}) {
+  const product = tp * pp * dp;
+  const ok = product === nGpu;
+  const recommend: { tp: number; pp: number; dp: number; label: string }[] = [];
+  if (nGpu >= 1) {
+    recommend.push({ tp: nGpu, pp: 1, dp: 1, label: "全 TP" });
+    if (nGpu === 16) recommend.push({ tp: 8, pp: 1, dp: 2, label: "TP=8 + DP=2" });
+    if (nGpu === 8) recommend.push({ tp: 4, pp: 1, dp: 2, label: "TP=4 + DP=2" });
+    if (nGpu === 64) recommend.push({ tp: 8, pp: 1, dp: 8, label: "TP=8 + DP=8" });
+  }
+
+  return (
+    <div
+      className={
+        "mt-1.5 rounded-md border px-2 py-1.5 text-[11px] leading-relaxed " +
+        (ok
+          ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300"
+          : "border-rose-700/50 bg-rose-900/20 text-rose-300")
+      }
+    >
+      <div className="flex items-center gap-2">
+        <span className="font-mono">
+          {tp} <span className="opacity-60">×</span> {pp} <span className="opacity-60">×</span> {dp}
+          <span className="opacity-60"> = </span>
+          <span className="font-bold">{product}</span>
+        </span>
+        <span className="opacity-70">
+          {ok ? "✓ 与物理卡数" : "✗ ≠ 物理卡数"} <span className="font-bold">{nGpu}</span> {ok ? "一致" : "卡，模型将无法启动"}
+        </span>
+      </div>
+      {!ok && recommend.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span className="opacity-70">推荐配置：</span>
+          {recommend.map((r) => (
+            <button
+              key={r.label}
+              className="chip border-rose-600/60 text-rose-200 hover:border-forge-ember hover:text-forge-ember"
+              onClick={() => onAutoFix(r.tp, r.pp, r.dp)}
+              title={`点击应用: TP=${r.tp}, PP=${r.pp}, DP=${r.dp}`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
