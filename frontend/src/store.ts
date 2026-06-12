@@ -1,7 +1,14 @@
 import { create } from "zustand";
 import { buildRecord, type ExportRecord } from "./lib/exportExcel";
+import {
+  cardHasNativeFp8,
+  coerceQuant,
+  engineForCard,
+  mapLegacyQuant,
+} from "./lib/engine";
 import type {
   EstimateResponse,
+  Engine,
   GpuGroup,
   GpuSpec,
   InferenceConfig,
@@ -40,6 +47,15 @@ export const DEFAULT_INFERENCE: InferenceConfig = {
   pp_size: 1,
   dp_size: 1,
   async_scheduling: false,
+  // 推理引擎 + SGLang/vLLM 专用 (随所选 GPU 自动切换, 见 updateGpuGroup)
+  engine: "vllm",
+  enable_dp_attention: false,
+  enable_dp_lm_head: false,
+  moe_a2a_backend: "none",
+  deepep_mode: "auto",
+  moe_dense_tp_size: 1,
+  enable_expert_parallel: false,
+  dist_init_addr: "",
 };
 
 interface State {
@@ -47,6 +63,8 @@ interface State {
   model: ModelSpec;
   gpuGroups: GpuGroup[];
   inference: InferenceConfig;
+  // 用户是否手动改过引擎; true 后换卡不再自动覆盖引擎
+  engineTouched: boolean;
   result: EstimateResponse | null;
   loading: boolean;
   error: string | null;
@@ -55,6 +73,7 @@ interface State {
   setGpuDb: (g: GpuSpec[]) => void;
   setModel: (m: Partial<ModelSpec>) => void;
   setInference: (i: Partial<InferenceConfig>) => void;
+  setEngine: (e: Engine) => void;
   addGpuGroup: (spec: GpuSpec) => void;
   updateGpuGroup: (idx: number, patch: Partial<GpuGroup>) => void;
   removeGpuGroup: (idx: number) => void;
@@ -68,33 +87,69 @@ interface State {
   serializeToUrl: () => string;
 }
 
+/** 换卡时自动推断引擎并把量化收敛到合法值 (用户手动改过引擎则不动引擎) */
+function autoEnginePatch(
+  spec: GpuSpec,
+  inf: InferenceConfig,
+  engineTouched: boolean,
+): Partial<InferenceConfig> {
+  const engine = engineTouched ? inf.engine : engineForCard(spec.name);
+  const hasFp8 = cardHasNativeFp8(spec);
+  return { engine, quantization: coerceQuant(engine, hasFp8, inf.quantization) };
+}
+
 export const useStore = create<State>((set, get) => ({
   gpuDb: [],
   model: DEFAULT_MODEL,
   gpuGroups: [],
   inference: DEFAULT_INFERENCE,
+  engineTouched: false,
   result: null,
   loading: false,
   error: null,
   records: [],
 
   setGpuDb: (g) =>
-    set((s) => ({
-      gpuDb: g,
-      // seed one group with the first card if empty
-      gpuGroups:
-        s.gpuGroups.length > 0 || g.length === 0
-          ? s.gpuGroups
-          : [{ spec: g[0], count: 8 }],
-    })),
+    set((s) => {
+      if (s.gpuGroups.length > 0 || g.length === 0) return { gpuDb: g };
+      // seed one group with the first card + 按该卡自动选引擎
+      return {
+        gpuDb: g,
+        gpuGroups: [{ spec: g[0], count: 8 }],
+        inference: { ...s.inference, ...autoEnginePatch(g[0], s.inference, s.engineTouched) },
+      };
+    }),
   setModel: (m) => set((s) => ({ model: { ...s.model, ...m } })),
   setInference: (i) => set((s) => ({ inference: { ...s.inference, ...i } })),
+  setEngine: (e) =>
+    set((s) => {
+      const spec = s.gpuGroups[0]?.spec;
+      const hasFp8 = cardHasNativeFp8(spec);
+      return {
+        engineTouched: true,
+        inference: {
+          ...s.inference,
+          engine: e,
+          quantization: coerceQuant(e, hasFp8, s.inference.quantization),
+          // 切到非 sglang 引擎时关闭 DP-Attention, 避免遗留非法状态
+          ...(e === "sglang" ? {} : { enable_dp_attention: false }),
+        },
+      };
+    }),
   addGpuGroup: (spec) =>
     set((s) => ({ gpuGroups: [...s.gpuGroups, { spec, count: 1 }] })),
   updateGpuGroup: (idx, patch) =>
-    set((s) => ({
-      gpuGroups: s.gpuGroups.map((g, i) => (i === idx ? { ...g, ...patch } : g)),
-    })),
+    set((s) => {
+      const gpuGroups = s.gpuGroups.map((g, i) =>
+        i === idx ? { ...g, ...patch } : g,
+      );
+      // 换了第 0 组的卡型 → 自动选引擎 + 收敛量化
+      const inference =
+        idx === 0 && patch.spec
+          ? { ...s.inference, ...autoEnginePatch(patch.spec, s.inference, s.engineTouched) }
+          : s.inference;
+      return { gpuGroups, inference };
+    }),
   removeGpuGroup: (idx) =>
     set((s) => ({ gpuGroups: s.gpuGroups.filter((_, i) => i !== idx) })),
   setResult: (r) => set({ result: r }),
@@ -136,11 +191,18 @@ export const useStore = create<State>((set, get) => ({
           return spec ? { spec, count: x.c } : null;
         })
         .filter(Boolean);
-      set((s) => ({
-        model: { ...s.model, ...payload.m },
-        inference: { ...s.inference, ...payload.i },
-        gpuGroups: groups.length ? groups : s.gpuGroups,
-      }));
+      set((s) => {
+        const inf: InferenceConfig = { ...s.inference, ...payload.i };
+        // 旧分享链接里的废弃量化值(int8/w8a8/w4a8/w4a16) → 合法值
+        if (inf.quantization) inf.quantization = mapLegacyQuant(inf.quantization);
+        return {
+          model: { ...s.model, ...payload.m },
+          inference: inf,
+          // 分享链接显式带了 engine 即视为用户已选定
+          engineTouched: s.engineTouched || payload.i?.engine != null,
+          gpuGroups: groups.length ? groups : s.gpuGroups,
+        };
+      });
     } catch {
       /* ignore malformed share links */
     }

@@ -1,19 +1,33 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../store";
-import type { DType, InterNode, KVCacheDType, Quantization } from "../types";
+import { cardHasNativeFp8, quantOptionsFor } from "../lib/engine";
+import type {
+  DeepEPMode,
+  DType,
+  Engine,
+  InterNode,
+  KVCacheDType,
+  MoeA2ABackend,
+  Quantization,
+} from "../types";
 
 const DTYPES: DType[] = ["auto", "float16", "bfloat16", "float32"];
-const QUANTIZATIONS: Quantization[] = [
-  "none",
-  "fp8",
-  "awq",
-  "gptq",
-  "int8",
-  "w8a8",
-  "w4a8",
-  "w4a16",
-];
-const KV_DTYPES: KVCacheDType[] = ["auto", "fp8", "fp8_e5m2", "fp8_e4m3", "int8"];
+const KV_DTYPES: KVCacheDType[] = ["auto", "fp8", "fp8_e5m2", "fp8_e4m3", "int8", "bfloat16"];
+const ENGINES: Engine[] = ["vllm", "vllm-ascend", "sglang"];
+const ENGINE_LABELS: Record<Engine, string> = {
+  vllm: "vLLM 标准 (NVIDIA/海光)",
+  "vllm-ascend": "vllm-ascend (昇腾)",
+  sglang: "SGLang (PPU)",
+};
+const QUANT_LABELS: Record<string, string> = {
+  none: "none (不量化)",
+  fp8: "fp8 (8bit, 仅 H/B 系列)",
+  ascend: "ascend (昇腾 W8A8)",
+  w8a8_int8: "w8a8_int8 (PPU INT8)",
+  awq: "awq (4bit)",
+  gptq: "gptq (4bit)",
+  bitsandbytes: "bitsandbytes (4bit)",
+};
 
 const LEN_PRESETS = [
   { label: "4K", v: 4096 },
@@ -31,16 +45,37 @@ const SEQ_PRESETS = [
 
 
 export function InferencePanel() {
-  const { inference, setInference, gpuGroups } = useStore();
+  const { inference, setInference, setEngine, gpuGroups } = useStore();
   const i = inference;
   const nGpu = gpuGroups.reduce((s, g) => s + g.count, 0);
+  const spec = gpuGroups[0]?.spec;
+  const hasFp8 = cardHasNativeFp8(spec);
+  const quantOptions = quantOptionsFor(i.engine, hasFp8);
+  const isSglang = i.engine === "sglang";
+  const dpAttn = isSglang && i.enable_dp_attention;
 
   return (
     <div className="card">
       <h2 className="mb-1 text-sm font-bold text-forge-flame">③ 推理参数</h2>
       <p className="mb-3 text-[11px] text-slate-400">
-        对应 vLLM 启动参数，默认即推荐配置；悬停 <Q /> 查看说明与调整影响。
+        对应推理引擎启动参数，默认即推荐配置；悬停 <Q /> 查看说明与调整影响。
       </p>
+
+      <Select
+        label="推理引擎"
+        flag="engine"
+        tip={
+          "选择推理框架，决定可用量化、并行语义与导出的启动命令。默认按所选 GPU 自动匹配，可手动覆盖。\n\n" +
+          "• vLLM 标准：NVIDIA(H/B/A 系列)、海光 DCU。\n" +
+          "• vllm-ascend：华为昇腾全系(910C/910B/310P)，量化用 ascend。\n" +
+          "• SGLang：平头哥 PPU，量化用 w8a8_int8，支持 DP-Attention。"
+        }
+        value={i.engine}
+        options={ENGINES}
+        optionLabels={ENGINE_LABELS}
+        onChange={(v) => setEngine(v as Engine)}
+      />
+      <div className="mb-3" />
 
       <NumberField
         label="上下文长度"
@@ -146,13 +181,16 @@ export function InferencePanel() {
           flag="--quantization"
           tip={
             '作用：把模型"压缩"成更小的格式来省显存，类似把高清图压成更小的文件。\n\n' +
-            "推荐：none（不压缩，质量最好）；用 H 系列显卡可选 fp8。\n\n" +
-            "awq / gptq：压成 4bit，权重显存能降到约原来的 1/4，适合显存不够的情况。\n" +
-            "fp8：压一半，且在新显卡（H 系列）上还能跑得更快。\n" +
+            "选项随引擎和卡能力自动过滤：\n" +
+            "• fp8（8bit）：仅 NVIDIA H/B 系列原生支持；910C/PPU 无原生 FP8，已隐藏。\n" +
+            "• ascend：昇腾 vllm-ascend 的 W8A8（8bit）。\n" +
+            "• w8a8_int8：PPU SGLang 的 INT8（8bit），官方推荐。\n" +
+            "• awq / gptq / bitsandbytes：4bit，权重显存约降到 1/4。\n" +
             "压得越狠越省显存，但回答质量损失也越大。"
           }
           value={i.quantization}
-          options={QUANTIZATIONS}
+          options={quantOptions}
+          optionLabels={QUANT_LABELS}
           onChange={(v) => setInference({ quantization: v as Quantization })}
         />
         <Select
@@ -196,7 +234,100 @@ export function InferencePanel() {
         </div>
       </div>
 
-      {/* 并行配置 (TP/PP/DP) */}
+      {/* SGLang DP-Attention 专区 (engine=sglang) */}
+      {isSglang && (
+        <div className="mt-2 rounded-lg border border-sky-800/50 bg-sky-950/20 p-2">
+          <Toggle
+            label="DP-Attention (注意力数据并行)"
+            flag="--enable-dp-attention"
+            tip={
+              "SGLang 的注意力数据并行(PPU/DeepSeek 官方默认)。开启后语义变化：\n\n" +
+              "• world_size = TP(每个实例占 TP 卡)，总卡数 = TP × 副本数。\n" +
+              "• 注意力按 DP 切分(需 TP % DP == 0)，FFN/MoE 按 TP/EP 切分。\n" +
+              "• 权重按 TP 切分、按副本数复制——不会因 DP 复制权重。\n\n" +
+              "典型：单实例 8 卡 TP=8 DP=8；16 卡机器跑 2 个这样的实例(吞吐×2)。"
+            }
+            checked={i.enable_dp_attention}
+            onChange={(v) =>
+              setInference(
+                v
+                  ? { enable_dp_attention: true, tp_size: Math.min(nGpu, 8) || 1, dp_size: Math.min(nGpu, 8) || 1, parallel_enabled: false }
+                  : { enable_dp_attention: false },
+              )
+            }
+          />
+          {dpAttn && (
+            <>
+              <div className="mt-1.5 grid grid-cols-2 gap-2">
+                <ParField
+                  label="张量并行 TP"
+                  flag="--tp"
+                  tip={"每个实例的卡数(world_size)。总卡数必须是 TP 的整数倍：副本数 = 总卡数 ÷ TP。\n如 16 卡 TP=8 → 2 个副本。"}
+                  value={i.tp_size}
+                  min={1}
+                  max={1024}
+                  onChange={(v) => setInference({ tp_size: v })}
+                />
+                <ParField
+                  label="注意力 DP"
+                  flag="--dp"
+                  tip={"注意力数据并行度，需能整除 TP(tp % dp == 0)。DeepSeek 单机常用 DP=TP(每卡一份独立注意力)。"}
+                  value={i.dp_size}
+                  min={1}
+                  max={1024}
+                  onChange={(v) => setInference({ dp_size: v })}
+                />
+              </div>
+              <SglangDpValidator
+                tp={i.tp_size}
+                dp={i.dp_size}
+                nGpu={nGpu}
+                onAutoFix={(tp, dp) => setInference({ tp_size: tp, dp_size: dp })}
+              />
+              <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1">
+                <Toggle
+                  label="DP LM Head"
+                  flag="--enable-dp-lm-head"
+                  tip={"LM head 也走数据并行，与 DP-Attention 配套，减少 lm_head all-gather 通信。"}
+                  checked={i.enable_dp_lm_head}
+                  onChange={(v) => setInference({ enable_dp_lm_head: v })}
+                />
+                <Toggle
+                  label="MoE DeepEP"
+                  flag="--moe-a2a-backend deepep"
+                  tip={"MoE 专家并行的 all-to-all 通信后端用 DeepEP(低延迟内核)。DeepSeek/大 MoE 推荐开。"}
+                  checked={i.moe_a2a_backend === "deepep"}
+                  onChange={(v) => setInference({ moe_a2a_backend: (v ? "deepep" : "none") as MoeA2ABackend })}
+                />
+              </div>
+              {i.moe_a2a_backend === "deepep" && (
+                <div className="mt-1.5 grid grid-cols-2 gap-2">
+                  <Select
+                    label="DeepEP 模式"
+                    flag="--deepep-mode"
+                    tip={"auto：自动按 batch 选；low_latency：小 batch 低延迟；normal：大 batch 高吞吐。"}
+                    value={i.deepep_mode}
+                    options={["auto", "low_latency", "normal"]}
+                    onChange={(v) => setInference({ deepep_mode: v as DeepEPMode })}
+                  />
+                  <ParField
+                    label="稠密层 TP"
+                    flag="--moe-dense-tp-size"
+                    tip={"MoE 模型里稠密(非专家)层的 TP，DeepSeek 官方常设 1。"}
+                    value={i.moe_dense_tp_size}
+                    min={1}
+                    max={1024}
+                    onChange={(v) => setInference({ moe_dense_tp_size: v })}
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* 并行配置 (TP/PP/DP) — DP-Attention 开启时由上面接管 */}
+      {!dpAttn && (
       <div className="mt-2">
         <Toggle
           label="自定义并行 (TP/PP/DP)"
@@ -262,6 +393,7 @@ export function InferencePanel() {
           onAutoFix={(tp, pp, dp) => setInference({ tp_size: tp, pp_size: pp, dp_size: dp })}
         />}
       </div>
+      )}
 
       {/* 跨机互联 (真多机时) */}
       {nGpu > i.gpus_per_node && (
@@ -531,6 +663,62 @@ function ParallelConfigValidator({
               className="chip border-rose-600/60 text-rose-200 hover:border-forge-ember hover:text-forge-ember"
               onClick={() => onAutoFix(r.tp, r.pp, r.dp)}
               title={`点击应用: TP=${r.tp}, PP=${r.pp}, DP=${r.dp}`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** SGLang DP-Attention 校验: world=TP, 总卡数必须是 TP 整数倍, 且 TP % DP == 0 */
+function SglangDpValidator({
+  tp, dp, nGpu, onAutoFix,
+}: {
+  tp: number; dp: number; nGpu: number;
+  onAutoFix: (tp: number, dp: number) => void;
+}) {
+  const tpOk = tp > 0 && nGpu % tp === 0;
+  const dpOk = dp > 0 && tp % dp === 0;
+  const ok = tpOk && dpOk;
+  const replicas = tpOk ? nGpu / tp : 0;
+  // 推荐: 单实例满载(TP=单机卡数,DP=TP) 或 8 卡副本(TP=8,DP=8)
+  const recommend: { tp: number; dp: number; label: string }[] = [];
+  if (nGpu % 8 === 0 && nGpu >= 8) recommend.push({ tp: 8, dp: 8, label: `TP=8 DP=8 ×${nGpu / 8}副本` });
+  recommend.push({ tp: nGpu, dp: nGpu, label: `TP=${nGpu} DP=${nGpu} 单副本` });
+
+  return (
+    <div
+      className={
+        "mt-1.5 rounded-md border px-2 py-1.5 text-[11px] leading-relaxed " +
+        (ok
+          ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300"
+          : "border-rose-700/50 bg-rose-900/20 text-rose-300")
+      }
+    >
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span className="font-mono">world=TP={tp}</span>
+        {ok ? (
+          <span className="opacity-80">
+            ✓ {nGpu} 卡 = {tp} × <span className="font-bold">{replicas}</span> 副本，吞吐≈单实例×{replicas}
+          </span>
+        ) : (
+          <span className="opacity-80">
+            ✗ {!tpOk ? `总卡数 ${nGpu} 不是 TP=${tp} 的整数倍` : `TP=${tp} 不能被 DP=${dp} 整除`}，无法启动
+          </span>
+        )}
+      </div>
+      {!ok && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span className="opacity-70">推荐配置：</span>
+          {recommend.map((r) => (
+            <button
+              key={r.label}
+              className="chip border-rose-600/60 text-rose-200 hover:border-forge-ember hover:text-forge-ember"
+              onClick={() => onAutoFix(r.tp, r.dp)}
+              title={`点击应用: TP=${r.tp}, DP=${r.dp}`}
             >
               {r.label}
             </button>

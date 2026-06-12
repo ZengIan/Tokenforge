@@ -40,16 +40,24 @@ export interface GpuGroup {
 }
 
 export type DType = "auto" | "float16" | "bfloat16" | "float32";
+export type Engine = "vllm" | "vllm-ascend" | "sglang";
 export type Quantization =
   | "none"
   | "fp8"
   | "awq"
   | "gptq"
+  | "bitsandbytes"
+  | "ascend"
+  | "w8a8_int8"
+  // legacy: 仅旧分享链接/记录向后兼容, 下拉不展示 (hydrate 时映射为合法值)
   | "int8"
   | "w8a8"
   | "w4a8"
   | "w4a16";
-export type KVCacheDType = "auto" | "fp8" | "fp8_e5m2" | "fp8_e4m3" | "int8";
+export type KVCacheDType =
+  | "auto" | "fp8" | "fp8_e5m2" | "fp8_e4m3" | "int8" | "bfloat16";
+export type MoeA2ABackend = "none" | "deepep";
+export type DeepEPMode = "auto" | "low_latency" | "normal";
 export type InterNode = "nvlink" | "ib" | "roce" | "ethernet";
 export type IntraNode = "auto" | "pcie";
 
@@ -67,6 +75,18 @@ export interface InferenceConfig {
   gpus_per_node: number;
   internode: InterNode;
   async_scheduling: boolean;
+  // 推理引擎
+  engine: Engine;
+  // SGLang 专用
+  enable_dp_attention: boolean;
+  enable_dp_lm_head: boolean;
+  moe_a2a_backend: MoeA2ABackend;
+  deepep_mode: DeepEPMode;
+  moe_dense_tp_size: number;
+  // vLLM 专用
+  enable_expert_parallel: boolean;
+  // 多机启动 (仅导出命令用)
+  dist_init_addr: string;
   parallel_enabled: boolean;
   tp_size: number;
   pp_size: number;
