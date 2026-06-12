@@ -473,28 +473,3 @@ def _extract_tensor_types(cfg: dict, model_id: str) -> str:
     if parts:
         return ", ".join(parts)
     return precision_from_name(model_id)
-
-
-# 计入权重大小的文件后缀
-_WEIGHT_EXTS = (".safetensors", ".bin", ".gguf", ".pt", ".pth")
-
-
-async def _fetch_weight_size_gb(client: httpx.AsyncClient, model_id: str) -> Optional[float]:
-    """从 ModelScope 仓库文件列表汇总权重文件体积,返回十进制 GB。"""
-    try:
-        url = f"{MS_BASE}/models/{model_id}/repo/files?Revision=master&Recursive=true"
-        resp = await client.get(url)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        files = (data.get("Data") or {}).get("Files") or []
-        total = 0
-        for f in files:
-            name = (f.get("Path") or f.get("Name") or "").lower()
-            if name.endswith(_WEIGHT_EXTS):
-                total += int(f.get("Size", 0) or 0)
-        if total <= 0:
-            return None
-        return round(total / 1e9, 2)  # 与 ModelScope 页面一致的十进制 GB
-    except Exception:
-        return None

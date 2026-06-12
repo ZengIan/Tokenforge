@@ -16,8 +16,6 @@ Coordinate system / assumptions
 """
 from __future__ import annotations
 
-import math
-
 from ..models.schemas import (
     EstimateRequest,
     EstimateResponse,
@@ -320,7 +318,6 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     internode_overhead_mult = 1.0
     if n_gpu > inf.gpus_per_node:
         # 多机/跨机: 损耗取决于跨机互联类型
-        n_nodes = math.ceil(n_gpu / inf.gpus_per_node)
         internode_overhead_mult = INTERNODE_OVERHEAD_MULT.get(inf.internode, 1.5)
     elif n_gpu > 1:
         # 单机多卡: 机内互联 (auto 按卡库 nvlink, pcie 强制纯 PCIe)

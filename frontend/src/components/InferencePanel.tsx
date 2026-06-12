@@ -92,7 +92,7 @@ export function InferencePanel() {
         label="输入长度 (Prompt)"
         flag="仅影响 TTFT"
         tip={
-          "--max-num-prompt-tokens 你的问题/上下文有多少个字(token)——只用来估算首字延迟(TTFT)。\n\n" +
+          "你的问题/上下文有多少个字(token)——仅用于估算首字延迟(TTFT)，不是 vLLM 启动参数(vLLM 无单独限制 prompt 长度的 flag，上下文上限由 --max-model-len 控制)。\n\n" +
           "为什么单独给：TTFT 几乎完全取决于 prompt 长度。\n" +
           "• 短输入(几百~2K，普通对话)：多卡下 TTFT 就是几十~几百毫秒(正常)。\n" +
           "• 长输入(4K~32K+，RAG/长文档/多轮历史)：TTFT 会到 0.5~3 秒甚至更久。\n" +
