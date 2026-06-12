@@ -24,6 +24,7 @@ const QUANT_LABELS: Record<string, string> = {
   fp8: "fp8 (8bit, 仅 H/B 系列)",
   ascend: "ascend (昇腾 W8A8)",
   w8a8_int8: "w8a8_int8 (PPU INT8)",
+  w8a8: "w8a8 (INT8/W8A8)",
   awq: "awq (4bit)",
   gptq: "gptq (4bit)",
   bitsandbytes: "bitsandbytes (4bit)",

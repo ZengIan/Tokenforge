@@ -40,9 +40,11 @@ export function quantOptionsFor(engine: Engine, hasFp8: boolean): Quantization[]
       break;
     case "vllm":
     default:
+      // 无原生 FP8 的卡(A100/海光/沐曦/天数/昆仑/寒武纪等)给通用 INT8(w8a8)选项:
+      // 选中即 1 字节权重 + 自动 2×FP16 算力(由后端按量化判别)。
       opts = hasFp8
         ? ["none", "fp8", "awq", "gptq", "bitsandbytes"]
-        : ["none", "awq", "gptq", "bitsandbytes"];
+        : ["none", "w8a8", "awq", "gptq", "bitsandbytes"];
       break;
   }
   return hasFp8 ? opts : opts.filter((q) => q !== "fp8");
@@ -55,10 +57,13 @@ export function defaultQuantFor(engine: Engine): Quantization {
   return "none";
 }
 
-/** 旧分享链接/记录里的废弃量化值 → 合法值映射 (hydrate 时清洗) */
+/**
+ * 旧分享链接/记录里的废弃量化值 → 规范值映射 (hydrate 时清洗)。
+ * w8a8 现在是标准 vLLM 的规范 INT8 值, 不再映射;
+ * int8 归一到 w8a8; sglang/ascend 引擎下若不合法, coerceQuant 会再回退到引擎默认 INT8。
+ */
 const LEGACY_QUANT: Record<string, Quantization> = {
-  int8: "w8a8_int8",
-  w8a8: "w8a8_int8",
+  int8: "w8a8",
   w4a8: "awq",
   w4a16: "awq",
 };
