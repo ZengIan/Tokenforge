@@ -57,8 +57,12 @@ QUANT_OVERHEAD: dict[str, float] = {
     "bitsandbytes": 1.05,
 }
 
-# 激活为 8bit/FP8/INT8 的量化方案,decode 计算可走低精度 Tensor Core
+# 激活为 8bit/FP8/INT8 的量化方案,decode/prefill 计算可走低精度 Tensor Core。
+# (awq/gptq/w4a16 是权重 4bit、激活仍 16bit, 计算不提速, 不在此集合)
 LOW_PRECISION_COMPUTE = {"fp8", "w8a8", "w4a8", "ascend", "w8a8_int8", "int8"}
+# 低精度(INT8/FP8)相对 FP16 的算力倍数。Tensor Core 上 8bit 吞吐≈2×FP16,
+# 故卡库未单列低精度算力时, 按 fp16_tflops × 此系数自动推导(无需在 yaml 维护 INT8 值)。
+LOW_PREC_COMPUTE_MULT = 2.0
 
 # --kv-cache-dtype -> 每元素字节数。auto 跟随 --dtype。
 KV_DTYPE_BYTES: dict[str, float] = {
@@ -275,23 +279,28 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     params = model.params_b * 1e9
 
     # aggregate hardware roofline across the whole TP group
-    # 低精度计算(FP8/INT8)可走低精度 Tensor Core; 卡库 fp8_tflops>0 时按其估算,
-    # 否则统一回退 FP16 算力(卡库普遍不单列 INT8 算力, 大家都以 FP16 为基准,
-    # INT8≈2×FP16 只是系数, 无额外信息), 因此 INT8 类量化静默按 FP16 估算, 不提示。
+    # 低精度(FP8/INT8)算力按 --quantization 自动判别:
+    #  ① 卡库有实测低精度算力(fp8_tflops>0, 多为 NVIDIA H/B) → 用实测值;
+    #  ② INT8 类量化但卡库无低精度算力(910C/PPU 等) → fp16 × 2 自动推导(INT8≈2×FP16);
+    #  ③ fp8 量化但卡无原生 FP8 → 不能真跑 fp8, 回退 fp16 并提示;
+    #  ④ 非低精度量化(awq/gptq/w4a16/none) → fp16。
     use_low_prec = inf.quantization in LOW_PRECISION_COMPUTE
     flops_total = 0.0
     bw_total = 0.0  # bytes/s
     total_mem_gb = 0.0
     all_nvlink = True
     for g in req.gpus:
-        peak = g.spec.fp8_tflops if use_low_prec and g.spec.fp8_tflops > 0 else g.spec.fp16_tflops
-        # 仅 fp8 量化用在无原生 FP8 的卡上时提示回退(这是真正的能力缺失);
-        # INT8 类量化(ascend/w8a8_int8 等)按 FP16 估算属约定, 不提示。
-        if inf.quantization == "fp8" and g.spec.fp8_tflops <= 0:
-            warnings.append(
-                f"{g.spec.name} 无原生 FP8 算力(仅 NVIDIA Hopper/Blackwell 支持),"
-                "已回退到 FP16 算力估算;该卡通常应改用 INT8 类量化。"
-            )
+        if use_low_prec and g.spec.fp8_tflops > 0:
+            peak = g.spec.fp8_tflops                              # ①
+        elif use_low_prec and inf.quantization != "fp8":
+            peak = g.spec.fp16_tflops * LOW_PREC_COMPUTE_MULT     # ② INT8 自动 2×
+        else:
+            peak = g.spec.fp16_tflops                             # ③/④
+            if inf.quantization == "fp8" and g.spec.fp8_tflops <= 0:
+                warnings.append(
+                    f"{g.spec.name} 无原生 FP8 算力(仅 NVIDIA Hopper/Blackwell 支持),"
+                    "已回退到 FP16 算力估算;该卡通常应改用 INT8 类量化。"
+                )
         flops_total += peak * 1e12 * g.count
         bw_total += g.spec.bw_gbs * 1e9 * g.count
         total_mem_gb += g.spec.mem_gb * g.count
