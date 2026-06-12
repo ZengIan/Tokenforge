@@ -275,27 +275,23 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     params = model.params_b * 1e9
 
     # aggregate hardware roofline across the whole TP group
-    # 低精度计算(FP8/INT8)可走低精度 Tensor Core; 卡库的 fp8_tflops 字段代表"低精度算力",
-    # 国产卡(910C/PPU)走 INT8 时也用该字段。为 0 表示卡库未录入低精度算力。
+    # 低精度计算(FP8/INT8)可走低精度 Tensor Core; 卡库 fp8_tflops>0 时按其估算,
+    # 否则统一回退 FP16 算力(卡库普遍不单列 INT8 算力, 大家都以 FP16 为基准,
+    # INT8≈2×FP16 只是系数, 无额外信息), 因此 INT8 类量化静默按 FP16 估算, 不提示。
     use_low_prec = inf.quantization in LOW_PRECISION_COMPUTE
-    is_fp8_quant = inf.quantization == "fp8"
     flops_total = 0.0
     bw_total = 0.0  # bytes/s
     total_mem_gb = 0.0
     all_nvlink = True
     for g in req.gpus:
         peak = g.spec.fp8_tflops if use_low_prec and g.spec.fp8_tflops > 0 else g.spec.fp16_tflops
-        if use_low_prec and g.spec.fp8_tflops <= 0:
-            if is_fp8_quant:
-                warnings.append(
-                    f"{g.spec.name} 无原生 FP8 算力(仅 NVIDIA Hopper/Blackwell 支持),"
-                    "已回退到 FP16 算力估算;该卡通常应改用 INT8 类量化。"
-                )
-            else:
-                warnings.append(
-                    f"{g.spec.name} 卡库未录入 INT8/低精度算力,已按 FP16 算力估算"
-                    "(实际低精度算力更高,TPS 可能偏保守)。"
-                )
+        # 仅 fp8 量化用在无原生 FP8 的卡上时提示回退(这是真正的能力缺失);
+        # INT8 类量化(ascend/w8a8_int8 等)按 FP16 估算属约定, 不提示。
+        if inf.quantization == "fp8" and g.spec.fp8_tflops <= 0:
+            warnings.append(
+                f"{g.spec.name} 无原生 FP8 算力(仅 NVIDIA Hopper/Blackwell 支持),"
+                "已回退到 FP16 算力估算;该卡通常应改用 INT8 类量化。"
+            )
         flops_total += peak * 1e12 * g.count
         bw_total += g.spec.bw_gbs * 1e9 * g.count
         total_mem_gb += g.spec.mem_gb * g.count
