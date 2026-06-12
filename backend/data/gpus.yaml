@@ -571,7 +571,7 @@ gpus:
     fp8_tflops: 0           # 架构不支持原生 FP8
     nvlink: true            # ICN 片间高速互联, 带宽 700GB/s
     source: datasheet
-    note: "PPU PG1_A910E，96GB HBM，显存带宽2700GB/s，FP16/BF16算力123 TFLOPS，INT8 246 TOPS，ICN片间互联700GB/s，PCIe 5.0×16，不支持FP8。"
+    note: "PPU PG1_A910E，96GB HBM，显存带宽2700GB/s，FP16/BF16算力123 TFLOPS，INT8 246 TOPS，ICN片间互联700GB/s，PCIe 5.0×16，不支持FP8。部署走 SGLang 0.5.10+，推荐 --quantization w8a8_int8(INT8)，无原生 FP8；单机 16 卡常起 2×(TP8 DP8 --enable-dp-attention) 副本+路由。"
 
 # ============================================================================
 # 校准提示:
