@@ -107,6 +107,28 @@ gpus:
     nvlink: true
     source: datasheet
 
+  # RTX PRO 6000 Blackwell (GB202, GDDR7, 工作站/服务器版; 无 NVLink, 仅 PCIe 5.0)
+  # 核心规格官方; FP16/FP8 稠密张量按 Blackwell 精度对半关系由 4000 AI TOPS(FP4 稀疏)推导:
+  # FP4稀疏4000 → FP4稠密2000 → FP8稠密1000 → FP16稠密500
+  "NVIDIA RTX PRO 6000 Blackwell (96G)":
+    mem_gb: 96
+    bw_gbs: 1792           # GDDR7 512-bit, 1.8 TB/s
+    fp16_tflops: 500       # 稠密 BF16/FP16 张量(由 4000 AI TOPS 推导)
+    fp8_tflops: 1000       # 稠密 FP8 张量
+    nvlink: false          # 无 NVLink, 多卡走 PCIe 5.0
+    source: datasheet
+    note: "RTX PRO 6000 Blackwell, 96GB GDDR7, 显存带宽1792GB/s(1.8TB/s), 24064 CUDA核, FP32 125 TFLOPS, 4000 AI TOPS(FP4稀疏); FP16/FP8稠密张量(500/1000T)按架构推导。无 NVLink, 多卡互联走 PCIe 5.0(TP 通信受限)。"
+
+  # RTX 6000D — 中国特供版(降规避管制): 84GB/19968核/降频, 带宽和算力均下调, 无 NVLink
+  "NVIDIA RTX 6000D (84G)":
+    mem_gb: 84
+    bw_gbs: 1570           # GDDR7 448-bit, 拆解实测约 1.57 TB/s
+    fp16_tflops: 390       # 按 FP32 比例(97/125≈0.78)从 6000 缩放
+    fp8_tflops: 775
+    nvlink: false
+    source: estimate
+    note: "RTX 6000D 中国特供版, 84GB GDDR7(448-bit), 显存带宽约1570GB/s, 19968 CUDA核, FP32 97 TFLOPS(较 6000 降频), 无 NVLink。FP16/FP8算力按 FP32 比例从 6000 推算(0.78×), 官方未单列张量算力, 数值供参考。"
+
   # ========================================================================
   # NVIDIA — Ampere 数据中心 (datasheet, dense; Ampere 无原生 FP8)
   # ========================================================================
