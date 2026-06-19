@@ -7,6 +7,11 @@
 #   fp16_tflops   : 稠密 FP16/BF16 Tensor Core 算力 (TFLOPS) —— ★dense, 非稀疏★
 #   fp8_tflops    : 稠密 FP8 算力 (TFLOPS) —— 无原生 FP8 的架构填 0
 #   nvlink        : 是否有片间高速互联 (true/false) —— 影响 TP all-reduce 效率
+#   compute_eff   : 真实可达算力效率(占手册比例),默认 1.0。主要影响 prefill/TTFT。
+#                   <1 表示软件栈/kernel 尚不成熟,跑不满手册算力(国产卡按实测标定)。
+#   bw_eff        : 真实可达带宽效率(占手册比例),默认 1.0。主要影响 decode/TPOT。
+#                   注:对 MoE+专家并行+推测解码等场景,该系数会吸收 all-to-all 通信、
+#                   MTP 等未单独建模的开销,故偏低且与"模型/框架"强相关,非纯硬件指标。
 #   source        : 数据来源,便于 review 可信度。取值约定:
 #                     datasheet      = 厂商官方规格书/白皮书 (最权威)
 #                     measured@日期  = 自己实测 (国产卡首选,最可信)
@@ -383,7 +388,11 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
-    note: "华为官方规格: 128GB HBM3, BF16 781 TFLOPS, 双 die 封装, HCCS 互联。"
+    # 效率系数: 据 DeepSeek-V4-Flash 实测报告(BENCH-20260615-001)标定。
+    # bw_eff 偏低是因吸收了 MTP 推测解码 + DeepEP all-to-all 等未建模开销(强依赖该 MoE 栈)。
+    compute_eff: 0.28
+    bw_eff: 0.10
+    note: "华为官方规格: 128GB HBM3, BF16 781 TFLOPS, 双 die 封装, HCCS 互联。效率系数据 DeepSeek-V4-Flash 实测标定(含MTP/EP开销),换模型/框架需重标。"
 
   "华为 Ascend 910B3 (64G)":
     mem_gb: 64
@@ -593,7 +602,10 @@ gpus:
     fp8_tflops: 0           # 架构不支持原生 FP8
     nvlink: true            # ICN 片间高速互联, 带宽 700GB/s
     source: datasheet
-    note: "PPU PG1_A910E，96GB HBM，显存带宽2700GB/s，FP16/BF16算力123 TFLOPS，INT8 246 TOPS，ICN片间互联700GB/s，PCIe 5.0×16，不支持FP8。部署走 SGLang 0.5.10+，推荐 --quantization w8a8_int8(INT8)，无原生 FP8；单机 16 卡常起 2×(TP8 DP8 --enable-dp-attention) 副本+路由。"
+    # 效率系数: 据 DeepSeek-V4-Flash SGLang 实测报告(BENCH-20260615-001)标定, 误差~10%。
+    compute_eff: 0.22
+    bw_eff: 0.20
+    note: "PPU PG1_A910E，96GB HBM，显存带宽2700GB/s，FP16/BF16算力123 TFLOPS，INT8 246 TOPS，ICN片间互联700GB/s，PCIe 5.0×16，不支持FP8。部署走 SGLang 0.5.10+，推荐 --quantization w8a8_int8(INT8)，无原生 FP8；单机 16 卡常起 2×(TP8 DP8 --enable-dp-attention) 副本+路由。效率系数据实测标定。"
 
 # ============================================================================
 # 校准提示:

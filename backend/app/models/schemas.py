@@ -34,6 +34,11 @@ class GpuSpec(BaseModel):
     nvlink: bool = False
     source: str = "estimate"
     note: str = ""
+    # 真实软件栈可达效率(占数据手册的比例), 默认 1.0(成熟栈如 NVIDIA)。
+    # 国产卡(框架/kernel 尚不成熟)可 <1 标定: compute_eff 主要影响 prefill/TTFT,
+    # bw_eff 主要影响 decode/TPOT。便于按实测把"理论上限"折到"真实可达"。
+    compute_eff: float = 1.0
+    bw_eff: float = 1.0
 
 
 class ModelSpec(BaseModel):

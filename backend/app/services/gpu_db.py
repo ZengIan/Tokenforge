@@ -29,6 +29,8 @@ def load_gpus() -> list[GpuSpec]:
                 nvlink=bool(body.get("nvlink", False)),
                 source=str(body.get("source", "estimate")),
                 note=str(body.get("note", "")),
+                compute_eff=float(body.get("compute_eff", 1.0)),
+                bw_eff=float(body.get("bw_eff", 1.0)),
             )
         )
     return specs

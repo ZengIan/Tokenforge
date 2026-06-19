@@ -241,10 +241,20 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
         kv_per_seq = 2 * model.num_layers * kv_dim * seq * kv_b * model.kv_cache_factor / KV_UTIL
         kv_theory = kv_per_seq * active_seqs
 
-    # 并行切分: 权重/KV 按模型并行(TP×PP)分片; DP 复制整套权重
+    # 并行切分: 权重按"复制份数 × 分片卡数"放置
     tp, pp, dp = _parallel_sizes(inf, n_gpu)
     mp = max(1, tp * pp)
-    weights_cluster = weights * dp  # DP 复制 dp 份权重
+    # 专家并行(EP): MoE 专家权重跨全部卡分片、不按 DP 复制(910C/vLLM --enable-expert-parallel,
+    # 或 SGLang DP-Attention 实例内)。SGLang 多实例(replicas=dp)仍各放一份完整模型 → ×dp。
+    vllm_ep = inf.engine != "sglang" and inf.enable_expert_parallel and model.is_moe
+    if vllm_ep:
+        weight_copies = 1            # 单服务, 专家跨 world 分片
+        weight_shard_cards = n_gpu   # 摊到全部卡
+    else:
+        weight_copies = dp           # DP 复制(SGLang 多实例 / 普通 DP)
+        weight_shard_cards = mp      # 每份按 TP×PP 分片
+    weights_cluster = weights * weight_copies
+    per_gpu_weight = weights / max(1, weight_shard_cards)
 
     non_kv = weights_cluster + act + overhead
     # 可用于 KV 的预算空间, 用于反推"实际可容纳并发"(vLLM 会按此截断并发)
@@ -254,8 +264,7 @@ def estimate_memory(req: EstimateRequest) -> tuple[MemoryBreakdown, list[str]]:
     # 显示口径用"真实需求"(KV 按 max_model_len×max_num_seqs 满算, 不截断),
     # 这样"总显存占用/利用率"才有意义(可 >100%, 表示放不下→会降并发到 max_kv_seqs)。
     total = non_kv + kv_theory
-    # 单卡: 权重按模型并行 mp 分片(DP 不减单卡权重); KV/激活 摊到所有卡
-    per_gpu = weights / mp + (kv_theory + act) / n_gpu + overhead_per_gpu
+    per_gpu = per_gpu_weight + (kv_theory + act) / n_gpu + overhead_per_gpu
 
     breakdown = MemoryBreakdown(
         weights_gb=weights_cluster / GB,
@@ -301,8 +310,10 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
                     f"{g.spec.name} 无原生 FP8 算力(仅 NVIDIA Hopper/Blackwell 支持),"
                     "已回退到 FP16 算力估算;该卡通常应改用 INT8 类量化。"
                 )
-        flops_total += peak * 1e12 * g.count
-        bw_total += g.spec.bw_gbs * 1e9 * g.count
+        # 乘以"真实可达效率": compute_eff 折 prefill 算力, bw_eff 折 decode 带宽
+        # (NVIDIA 默认 1.0 不变; 国产卡按实测标定 <1)
+        flops_total += peak * 1e12 * g.count * g.spec.compute_eff
+        bw_total += g.spec.bw_gbs * 1e9 * g.count * g.spec.bw_eff
         total_mem_gb += g.spec.mem_gb * g.count
         all_nvlink = all_nvlink and g.spec.nvlink
 
@@ -391,6 +402,11 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     # 单请求只用其所在副本的 模型并行(mp=TP×PP) 组算力/带宽; DP 副本并行服务不同请求
     mp_frac = mp / n_gpu  # 一个副本占总卡数的比例
     bw_replica = bw_total * mp_frac    # 单副本聚合带宽
+    flops_replica = flops_total * mp_frac
+    # 副本数(DP) 与 单副本内并发: continuous batching 下每步搬一次权重 + 副本内 batch 条 KV,
+    # 故 TPOT 随"副本内并发"增长(这是真实 TPOT 随总并发上涨的来源)。
+    replicas = max(1, dp)
+    batch_per_replica = max(1.0, eff_batch / replicas)
 
     # ---------------- DECODE 屋顶线 ----------------
     # 每步搬运: 激活权重(整批共享一次) + 每条序列各自的 KV(随上下文长度增长)。
@@ -398,10 +414,14 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     # 每路 KV 读取量按"实际序列长度"(≈输入长度)缩放; mem.kv_cache_gb 是 max-model-len 满算口径
     in_len = min(inf.input_len, inf.max_model_len)
     kv_per_seq = (mem.kv_cache_gb * GB / max(1, batch)) * (in_len / max(1, inf.max_model_len))
-    # 单请求: 权重 + 自己 1 路 KV; 总吞吐: 权重(共享) + 实际在跑的 eff_batch 路 KV
+    # 单请求(batch=1): 权重 + 自己 1 路 KV
     tpot_bw_single = (weight_read_bytes + kv_per_seq) / (bw_replica * mem_util)
+    # 副本内满载(batch_per_replica 路): 一步读权重 + 副本内所有路 KV —— 这是实际每 token 步时
+    tpot_bw_batch = (weight_read_bytes + kv_per_seq * batch_per_replica) / (bw_replica * mem_util)
+    # 总吞吐口径(瓶颈判定用): 聚合带宽 + 全 eff_batch 路 KV
     tpot_bw_total = (weight_read_bytes + kv_per_seq * eff_batch) / (bw_total * mem_util)
     decode_compute_t = (2 * active_params * eff_batch) / (flops_total * compute_util)
+    decode_compute_replica = (2 * active_params * batch_per_replica) / (flops_replica * compute_util)
 
     # ---------------- 每 token 固定开销(现实地板) ----------------
     arch_mult = 1.0
@@ -419,9 +439,9 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
         * internode_overhead_mult
     ) / 1000.0
 
-    # 单请求 TPOT(副本带宽) 与 总吞吐 TPOT(聚合带宽)
-    tpot_single = max(tpot_bw_single, decode_compute_t / max(1, eff_batch)) + overhead_s
-    tpot_total = max(tpot_bw_total, decode_compute_t) + overhead_s
+    # 单请求 TPOT(batch=1, 用于"单用户TPS") 与 实际每 token 步时(副本内满载, 随并发增长)
+    tpot_single = max(tpot_bw_single, decode_compute_replica / max(1, batch_per_replica)) + overhead_s
+    tpot_step = max(tpot_bw_batch, decode_compute_replica) + overhead_s
 
     # ---------------- PREFILL → TTFT ----------------
     # TTFT 是算力瓶颈, 同时随 ① 输入(prompt)长度 ② 并发(prefill 争抢算力) 增长。
@@ -493,11 +513,13 @@ def estimate(req: EstimateRequest) -> EstimateResponse:
     single_tps = _safe(tpot_single)
     single_tps_high = _safe(tpot_bw_single + overhead_s * OVERHEAD_FAST)
     single_tps_low = _safe(tpot_bw_single + overhead_s * OVERHEAD_SLOW)
-    tps = eff_batch * _safe(tpot_total)
-    tps_high = eff_batch * _safe(tpot_bw_total + overhead_s * OVERHEAD_FAST)
-    tps_low = eff_batch * _safe(tpot_bw_total + overhead_s * OVERHEAD_SLOW)
-    tpot_eff = tpot_single
-    request_latency = ttft + tpot_single  # 首字 + 单 token
+    # 总吞吐 = 每副本每步 batch_per_replica 个 token / 步时, replicas 个副本并行 = eff_batch / 步时
+    tps = eff_batch * _safe(tpot_step)
+    tps_high = eff_batch * _safe(tpot_bw_batch + overhead_s * OVERHEAD_FAST)
+    tps_low = eff_batch * _safe(tpot_bw_batch + overhead_s * OVERHEAD_SLOW)
+    # "每字延迟"展示副本内满载的实际步时(随并发增长), 而非 batch=1 的理想值
+    tpot_eff = tpot_step
+    request_latency = ttft + tpot_step  # 首字 + 单 token
     # 供瓶颈分析判断带宽 vs 算力
     tpot = tpot_bw_total
 
