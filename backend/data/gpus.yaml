@@ -401,6 +401,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "FP16 算力约 313–320 TFLOPS,配备 ‌64GB HBM3e 显存‌，带宽 ‌1.2 TB/s。"
 
   "华为 Ascend 910B2 (64G)":
@@ -410,6 +413,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "FP16 算力约 300-376 TFLOPS‌，配备‌64GB 显存。"
 
   "华为 Ascend 910B4 (32G)":
@@ -419,6 +425,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "推理卡，32GB HBM2e。"
 
   "华为 Ascend 910B4-1 (64G)":
@@ -428,6 +437,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "910B4 64GB 版本，规格同 910B3。"
 
   "华为 Ascend 910A (32G)":
@@ -437,6 +449,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # HCCS/xGMI 高速片间互联
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "华为官方规格: 初代 910, 32GB HBM2, BF16 320 TFLOPS。"
 
   "华为 Ascend 310P (24G)":
@@ -446,6 +461,9 @@ gpus:
     fp8_tflops: 0
     nvlink: false
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "华为推理卡, LPDDR4x, 算力偏低。"
 
   # ========================================================================
@@ -458,6 +476,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # xGMI2 高速片间互联 184GB/s
     source: estimate
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "深算一号，32GB HBM2，xGMI2 184GB/s。基于实测博客，带宽/算力待官方确认。"
 
   "海光 DCU Z100L (32G)":
@@ -467,6 +488,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # xGMI2 高速片间互联
     source: estimate
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "Z100 低功耗版，32GB HBM2，xGMI2。基于实测博客，待官方确认。"
 
   "海光 DCU K100 (32G)":
@@ -476,6 +500,9 @@ gpus:
     fp8_tflops: 0
     nvlink: false
     source: estimate
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "32GB HBM2 版本，通用计算，无 xGMI 互联。基于实测博客，待官方确认。"
 
   "海光 DCU K100-AI (64G)":
@@ -485,6 +512,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # xGMI 高速片间互联
     source: estimate
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "K100 AI增强版，64GB HBM2，加入Tensor Core，xGMI互联。FP16 192T多来源交叉，带宽/算力待官方确认。"
 
   # ========================================================================
@@ -497,6 +527,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # MetaXLink 高速片间互联, 单机8卡全互联
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "沐曦曦云C500 OAM版，64GB HBM2e，FP16/BF16 280T，INT8 560 TOPS，MetaXLink 8卡全互联。"
 
   "沐曦 曦云C500 PCIe (64G)":
@@ -506,6 +539,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # MetaXLink 高速片间互联, 2卡/4卡全互联
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "沐曦曦云C500 PCIe版，64GB HBM2e，FP16/BF16 240T，INT8 480 TOPS，MetaXLink 2/4卡互联。"
   # ========================================================================
   # 天数智芯 (estimate, 算力已校准)
@@ -517,6 +553,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # BI-Link 片间互联 64GB/s
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "天垓100，官方规格：32GB HBM2，FP16 147T(含TCU)，INT8 295 TOPS，BI-Link 64GB/s。"
 
   "天数智芯 BI-V150 (64G)":
@@ -526,6 +565,9 @@ gpus:
     fp8_tflops: 0
     nvlink: false
     source: estimate
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "天垓150，64GB HBM2e，FP16 192T(教程引用)。带宽待官方确认，显存类型有HBM2e/GDDR6矛盾报道。"
 
   "天数智芯 MR-V100 (32G)":
@@ -535,6 +577,9 @@ gpus:
     fp8_tflops: 0
     nvlink: false
     source: estimate
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "智铠100推理卡，32GB HBM2E，INT8 384 TOPS。FP16 96T为报道值，带宽待官方确认。"
 
   "天数智芯 天垓150 (32G)":
@@ -544,6 +589,9 @@ gpus:
     fp8_tflops: 0
     nvlink: false
     source: estimate
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "天垓150 32GB版本（算力市场），规格同64GB版但显存减半。带宽待官方确认。"
   # ========================================================================
   # 昆仑芯 (estimate, 算力已校准)
@@ -555,6 +603,9 @@ gpus:
     fp8_tflops: 0          # 软件模拟，非原生，按约定填 0
     nvlink: true            # XCCL 高速片间互联 (卡间互联带宽比 PCIe 提升 8 倍)
     source: datasheet   
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
     note: "百度第三代 P800，96GB HBM3，FP16 256T，XCCL高速互联。FP8 为软件模拟，非原生硬件支持。"
 
   # ========================================================================
@@ -567,6 +618,9 @@ gpus:
     fp8_tflops: 0
     nvlink: false
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
 
   "寒武纪 MLU370-X4 (24G)":
     mem_gb: 24
@@ -575,6 +629,9 @@ gpus:
     fp8_tflops: 0
     nvlink: false
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
 
   "寒武纪 MLU370-X8 (48G)":
     mem_gb: 48
@@ -583,6 +640,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # MLU-Link 多芯互联, 200GB/s
     source: datasheet
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
 
   "寒武纪 思元590 (96G)":
     mem_gb: 96
@@ -591,6 +651,9 @@ gpus:
     fp8_tflops: 0
     nvlink: true            # MLU-Link 4.0 多芯互联
     source: estimate
+    # 通用国产估值(无实测): 按 PPU/910C 实测区间保守取值, 上线/投标前务必用实测覆盖
+    compute_eff: 0.25
+    bw_eff: 0.15
 
   # ========================================================================
   # PPU (datasheet, 已校准)
