@@ -33,7 +33,7 @@ export const DEFAULT_INFERENCE: InferenceConfig = {
   max_model_len: 8192,
   max_num_seqs: 16,
   max_num_batched_tokens: 2048,
-  input_len: 2048,
+  input_len: 1024,
   dtype: "auto",
   quantization: "none",
   kv_cache_dtype: "auto",
@@ -63,8 +63,6 @@ interface State {
   model: ModelSpec;
   gpuGroups: GpuGroup[];
   inference: InferenceConfig;
-  // 用户是否手动改过引擎; true 后换卡不再自动覆盖引擎
-  engineTouched: boolean;
   result: EstimateResponse | null;
   loading: boolean;
   error: string | null;
@@ -87,15 +85,24 @@ interface State {
   serializeToUrl: () => string;
 }
 
-/** 换卡时自动推断引擎并把量化收敛到合法值 (用户手动改过引擎则不动引擎) */
+/** 换卡时自动推断引擎、收敛量化, 并按引擎配好默认部署(SGLang→DP-Attention TP8) */
 function autoEnginePatch(
   spec: GpuSpec,
   inf: InferenceConfig,
-  engineTouched: boolean,
+  nGpu: number,
 ): Partial<InferenceConfig> {
-  const engine = engineTouched ? inf.engine : engineForCard(spec.name);
+  const engine = engineForCard(spec.name);
   const hasFp8 = cardHasNativeFp8(spec);
-  return { engine, quantization: coerceQuant(engine, hasFp8, inf.quantization) };
+  const base: Partial<InferenceConfig> = {
+    engine,
+    quantization: coerceQuant(engine, hasFp8, inf.quantization),
+  };
+  if (engine === "sglang") {
+    // PPU 真实部署: DP-Attention, 每实例 TP≤8(16卡→2副本), 否则默认会按 TP=总卡数 算错
+    const tp = Math.min(8, Math.max(1, nGpu));
+    return { ...base, enable_dp_attention: true, tp_size: tp, dp_size: tp, parallel_enabled: false };
+  }
+  return { ...base, enable_dp_attention: false };
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -103,7 +110,6 @@ export const useStore = create<State>((set, get) => ({
   model: DEFAULT_MODEL,
   gpuGroups: [],
   inference: DEFAULT_INFERENCE,
-  engineTouched: false,
   result: null,
   loading: false,
   error: null,
@@ -112,11 +118,11 @@ export const useStore = create<State>((set, get) => ({
   setGpuDb: (g) =>
     set((s) => {
       if (s.gpuGroups.length > 0 || g.length === 0) return { gpuDb: g };
-      // seed one group with the first card + 按该卡自动选引擎
+      // seed one group with the first card + 按该卡自动选引擎/部署
       return {
         gpuDb: g,
         gpuGroups: [{ spec: g[0], count: 8 }],
-        inference: { ...s.inference, ...autoEnginePatch(g[0], s.inference, s.engineTouched) },
+        inference: { ...s.inference, ...autoEnginePatch(g[0], s.inference, 8) },
       };
     }),
   setModel: (m) => set((s) => ({ model: { ...s.model, ...m } })),
@@ -125,14 +131,16 @@ export const useStore = create<State>((set, get) => ({
     set((s) => {
       const spec = s.gpuGroups[0]?.spec;
       const hasFp8 = cardHasNativeFp8(spec);
+      const nGpu = s.gpuGroups.reduce((a, g) => a + g.count, 0) || 8;
+      const sgl = e === "sglang"
+        ? { enable_dp_attention: true, tp_size: Math.min(8, nGpu), dp_size: Math.min(8, nGpu), parallel_enabled: false }
+        : { enable_dp_attention: false };
       return {
-        engineTouched: true,
         inference: {
           ...s.inference,
           engine: e,
           quantization: coerceQuant(e, hasFp8, s.inference.quantization),
-          // 切到非 sglang 引擎时关闭 DP-Attention, 避免遗留非法状态
-          ...(e === "sglang" ? {} : { enable_dp_attention: false }),
+          ...sgl,
         },
       };
     }),
@@ -143,10 +151,11 @@ export const useStore = create<State>((set, get) => ({
       const gpuGroups = s.gpuGroups.map((g, i) =>
         i === idx ? { ...g, ...patch } : g,
       );
-      // 换了第 0 组的卡型 → 自动选引擎 + 收敛量化
+      const nGpu = gpuGroups.reduce((a, g) => a + g.count, 0);
+      // 换了第 0 组的卡型 → 总是按新卡自动选引擎/部署 + 收敛量化(卡型是引擎的决定因素)
       const inference =
         idx === 0 && patch.spec
-          ? { ...s.inference, ...autoEnginePatch(patch.spec, s.inference, s.engineTouched) }
+          ? { ...s.inference, ...autoEnginePatch(patch.spec, s.inference, nGpu) }
           : s.inference;
       return { gpuGroups, inference };
     }),
@@ -198,8 +207,6 @@ export const useStore = create<State>((set, get) => ({
         return {
           model: { ...s.model, ...payload.m },
           inference: inf,
-          // 分享链接显式带了 engine 即视为用户已选定
-          engineTouched: s.engineTouched || payload.i?.engine != null,
           gpuGroups: groups.length ? groups : s.gpuGroups,
         };
       });
