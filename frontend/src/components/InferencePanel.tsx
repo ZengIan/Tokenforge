@@ -54,6 +54,10 @@ export function InferencePanel() {
   const quantOptions = quantOptionsFor(i.engine, hasFp8);
   const isSglang = i.engine === "sglang";
   const dpAttn = isSglang && i.enable_dp_attention;
+  // 实际逐 token 通信的并行组(单副本): SGLang DP-Attn=TP; 普通=TP×PP; 默认=全部卡。
+  // 仅当该组跨节点才有跨机损耗; 纯 DP 副本/多实例跨机不通信→无损耗。
+  const mpCards = dpAttn ? i.tp_size : i.parallel_enabled ? i.tp_size * i.pp_size : nGpu;
+  const commSpansNodes = mpCards > i.gpus_per_node;
 
   return (
     <div className="card">
@@ -380,12 +384,12 @@ export function InferencePanel() {
             label={`跨机互联（${Math.ceil(nGpu / Math.max(1, i.gpus_per_node))} 机 ${nGpu} 卡）`}
             flag="多机部署"
             tip={
-              "卡数超过单机卡数 = 多机部署，跨机通信会拖低算力效率。\n\n" +
+              "卡数超过单机卡数 = 多机部署。跨机损耗只在【单副本的 TP/PP 组真的跨节点】时才发生；\n" +
+              "若只是 DP 副本/多实例跨机（副本间不通信），则单请求延迟不受影响。\n\n" +
               "• NVLink Switch：机间 GPU 直连，几乎无损耗。\n" +
-              "• InfiniBand IB：原生 RDMA，prefill ~5%，延迟 1.2×。\n" +
-              "• RoCE 高速网：以太网 RDMA，prefill ~10%，延迟 1.5×。\n" +
-              "• 25G 普通以太网：prefill ~20%，延迟 2.5×。\n\n" +
-              "注：decode 阶段跨机损耗全走延迟放大，不叠算力折扣。"
+              "• InfiniBand IB：原生 RDMA，TTFT 通信走 ~50GB/s，TPOT 延迟 1.2×。\n" +
+              "• RoCE 高速网：~25GB/s，TPOT 延迟 1.5×。\n" +
+              "• 25G 普通以太网：~8GB/s，TPOT 延迟 2.5×。"
             }
             value={i.internode}
             options={["nvlink", "ib", "roce", "ethernet"]}
@@ -397,6 +401,13 @@ export function InferencePanel() {
             }}
             onChange={(v) => setInference({ internode: v as InterNode })}
           />
+          {!commSpansNodes && (
+            <div className="mt-1.5 rounded-md border border-slate-700/60 bg-slate-800/40 px-2 py-1.5 text-[11px] leading-relaxed text-slate-400">
+              ℹ 当前单副本通信组只有 {mpCards} 卡(≤ 单机 {i.gpus_per_node} 卡)，跨机的只是 DP 副本/多实例——
+              副本间不通信，<span className="text-slate-200">切换跨机互联类型不影响 TTFT/TPOT</span>。
+              只有让单副本的 TP/PP 跨节点(如 TP&gt;单机卡数)才会有跨机损耗。
+            </div>
+          )}
         </div>
       )}
     </div>
